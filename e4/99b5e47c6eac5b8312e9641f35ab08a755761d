@@ -1,0 +1,42 @@
+coworker/server/app.py
+  s_ad83e26c6e479b::t_c7d9c971a6f936 1604-1607,1615,1619-1623,1627,1629,1631-1633,1637-1648,1652
+  s_ad83e26c6e479b::t_db2e4156fbcf0f 1727-1779
+  s_ad83e26c6e479b::t_6bfad262a33100 1780-1802
+  s_ad83e26c6e479b::t_42ae32ebec0ec1 1599-1603,1608-1610,1653-1660
+  s_ad83e26c6e479b::t_b5985fc244225a 1718-1726
+  s_ad83e26c6e479b::t_37c01b13065882 1665-1667
+coworker/server/manager.py
+  s_ad83e26c6e479b::t_7c17fe38a0a0c7 2590-2595
+  s_ad83e26c6e479b::t_be8743fda5d4b3 140-143,145-147
+  s_ad83e26c6e479b::t_d375c8574b6cb4 2606-2607
+  s_ad83e26c6e479b::t_152174c1417aba 2596-2605,2608-2618
+  s_ad83e26c6e479b::t_83831ebae37503 2544-2545,2549-2552,2556-2566
+  s_ad83e26c6e479b::t_cdd179ceec3fbb 18
+  s_ad83e26c6e479b::t_0a36a4ec0a3083 144,148-155
+  s_ad83e26c6e479b::t_dc2a74dc2117f1 2503-2505,2510-2514,2516-2518,2524
+  s_ad83e26c6e479b::t_bb04560f913cc9 2496-2502,2506-2509,2515,2519-2523,2525-2543,2546-2548,2553-2555,2567-2589
+  s_ad83e26c6e479b::t_753954ebfe907c 195
+surfaces/gui/src/api.ts
+  s_ad83e26c6e479b::t_a25167b7dfac0c 1767-1800
+  s_ad83e26c6e479b::t_ecc4e663b133f1 1713-1715,1721
+surfaces/gui/src/components/Composer.tsx
+  s_ad83e26c6e479b::t_8a4631dee92dca 264-266,268,274-283,289-293,297-301
+  s_ad83e26c6e479b::t_5988ee67780e59 63-66
+  s_ad83e26c6e479b::t_b23d08c2e46435 96-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "e499b5e47c6eac5b8312e9641f35ab08a755761d",
+  "prompts": {},
+  "sessions": {
+    "s_ad83e26c6e479b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76722c1-9e39-442b-93a0-7c3e8776d6df",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
