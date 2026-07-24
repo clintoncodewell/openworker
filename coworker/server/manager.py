@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -136,6 +137,22 @@ class SessionManager:
         self._running_sessions: set[str] = (
             set()
         )  # sessions with an in-flight turn (busy)
+        # Prompts submitted while a turn is running park here and auto-run in order when it
+        # ends; promoting one instead steers it into the LIVE turn (engine.queue_steering).
+        # Persisted so an app restart / dev-reload never silently drops queued work.
+        self._prompt_queue: dict[str, list[dict[str, Any]]] = {}
+        self._queue_paused: set[str] = set()
+        self._queue_path = base / "prompt_queue.json"
+        try:
+            if self._queue_path.is_file():
+                raw = json.loads(self._queue_path.read_text(encoding="utf-8"))
+                self._prompt_queue = raw.get("queues") or {}
+                # Restored work never auto-runs. The turn it was queued behind died with the
+                # process, so resuming is the user's call — surprising them with shell/file
+                # work on launch is exactly what we don't want.
+                self._queue_paused = {s for s, q in self._prompt_queue.items() if q}
+        except (OSError, ValueError, AttributeError):
+            self._prompt_queue, self._queue_paused = {}, set()  # never crash boot
         # Sessions with an auto-title LLM call in flight (FB-010) — one call at a time.
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
@@ -175,7 +192,7 @@ class SessionManager:
         # The scheduler also resumes self-wake'd sessions each tick (extra_tick).
         self.task_store = TaskStore(base / "automation.db")
         self.scheduler = Scheduler(
-            self.task_store, self._run_scheduled_task, extra_tick=self.resume_due_wakes
+            self.task_store, self._run_scheduled_task, extra_tick=self._scheduler_extra_tick
         )
         # Personas: registry + lifecycle state under this manager's data dir. Installed as the
         # process singleton so agents.get_agent resolves persona ids (incl. third-party) here.
@@ -2475,6 +2492,129 @@ class SessionManager:
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self._running_sessions
+
+    # -- prompt queue -----------------------------------------------------------
+    # Submitted-while-busy prompts wait here instead of colliding with the running turn
+    # (two concurrent runs on one session corrupt its message history). The WS pops the
+    # next one on turn_done; promote-to-steer pulls one out and injects it mid-turn.
+
+    def _save_prompt_queue(self) -> None:
+        try:
+            self._queue_path.write_text(
+                json.dumps({"queues": self._prompt_queue}), encoding="utf-8"
+            )
+        except OSError:
+            pass  # best-effort durability; a lost queue must never break a turn
+
+    def enqueue_prompt(
+        self,
+        session_id: str,
+        text: str,
+        attachments: Optional[list] = None,
+        not_before: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Park a prompt. `not_before` (epoch seconds) makes it a scheduled GATE: it can't run
+        early, and because the queue runs strictly in order, nothing behind it runs either —
+        which is what makes "start this whole queue at 9pm" just work."""
+        item = {
+            "id": "q-" + uuid.uuid4().hex[:8],
+            "text": text,
+            "attachments": attachments or [],
+            "created_at": time.time(),
+            "not_before": not_before,
+        }
+        self._prompt_queue.setdefault(session_id, []).append(item)
+        self._save_prompt_queue()
+        return item
+
+    def queued_prompts(self, session_id: str) -> list[dict[str, Any]]:
+        return list(self._prompt_queue.get(session_id) or [])
+
+    def remove_queued(self, session_id: str, item_id: str) -> Optional[dict[str, Any]]:
+        """Remove and RETURN the item — promote-to-steer reuses the returned text."""
+        items = self._prompt_queue.get(session_id) or []
+        for i, item in enumerate(items):
+            if item.get("id") == item_id:
+                found = items.pop(i)
+                self._save_prompt_queue()
+                return found
+        return None
+
+    def pop_queued(self, session_id: str) -> Optional[dict[str, Any]]:
+        """Pop the head ONLY if it's runnable now. A head still inside its `not_before` window
+        gates the whole queue (strict order), so this returns None rather than skipping it."""
+        items = self._prompt_queue.get(session_id) or []
+        if not items:
+            return None
+        head = items[0]
+        not_before = head.get("not_before")
+        if not_before and time.time() < float(not_before):
+            return None
+        item = items.pop(0)
+        self._save_prompt_queue()
+        return item
+
+    def queue_paused(self, session_id: str) -> bool:
+        return session_id in self._queue_paused
+
+    def pause_queue(self, session_id: str) -> None:
+        """Halt auto-advance. Set after an error/Stop: the next item may well depend on the
+        work that just failed, so it must never start on its own."""
+        self._queue_paused.add(session_id)
+
+    def resume_queue(self, session_id: str) -> None:
+        self._queue_paused.discard(session_id)
+
+    def edit_queued(
+        self, session_id: str, item_id: str, text: str
+    ) -> Optional[dict[str, Any]]:
+        for item in self._prompt_queue.get(session_id) or []:
+            if item.get("id") == item_id:
+                item["text"] = text
+                self._save_prompt_queue()
+                return item
+        return None
+
+    def reorder_queue(self, session_id: str, order: list[str]) -> list[dict[str, Any]]:
+        """Reorder to `order`; ids missing from it keep their relative position at the end,
+        so a stale client list can never drop an item."""
+        items = self._prompt_queue.get(session_id) or []
+        by_id = {item.get("id"): item for item in items}
+        seen = set(order)
+        reordered = [by_id[i] for i in order if i in by_id]
+        reordered += [item for item in items if item.get("id") not in seen]
+        self._prompt_queue[session_id] = reordered
+        self._save_prompt_queue()
+        return list(reordered)
+
+    async def _scheduler_extra_tick(self) -> None:
+        """The scheduler's one extra-tick hook, now shared: resume self-wakes, then start any
+        queue whose scheduled gate has come due."""
+        await self.resume_due_wakes()
+        await self.advance_due_queues()
+
+    async def advance_due_queues(self) -> None:
+        """Scheduler tick: start any queue whose head has come due while the session sits idle.
+        This is what fires a scheduled prompt with no window open — and it catches up a gate
+        whose time passed while the app was shut down."""
+        for session_id in list(self._prompt_queue):
+            if self.is_running(session_id) or self.queue_paused(session_id):
+                continue
+            item = self.pop_queued(session_id)  # None while the head is still gated
+            if item is None or not item.get("text"):
+                continue
+            # Don't pre-mark running: `deliver_to_session` owns that, and a session already
+            # marked busy would take its STEER path instead of starting the turn.
+            try:
+                await self.deliver_to_session(session_id, item["text"])
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "queued prompt failed for %s", session_id
+                )
+                # Put it back at the head and stop auto-advancing — the user decides.
+                self._prompt_queue.setdefault(session_id, []).insert(0, item)
+                self._save_prompt_queue()
+                self.pause_queue(session_id)
 
     async def _resume_wake(self, wake) -> None:
         await self.deliver_to_session(wake.session_id, self._wake_message(wake))

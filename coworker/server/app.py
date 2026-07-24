@@ -1596,30 +1596,75 @@ def create_app(manager: SessionManager) -> FastAPI:
             "iteration_end",
         }
 
+        async def _broadcast_queue() -> None:
+            await manager.broadcast_session(
+                session_id,
+                {
+                    "type": "queue_updated",
+                    "data": {
+                        "items": manager.queued_prompts(session_id),
+                        "paused": manager.queue_paused(session_id),
+                    },
+                },
+            )
+
         async def run_turn(content, *, retry: bool = False) -> None:
             manager.mark_running(
                 session_id
             )  # busy → self-wakes steer instead of colliding
+            clean = False  # only a turn that reached TURN_END may advance the queue
             try:
                 events = engine.retry() if retry else engine.run(content)
                 async for event in events:
+                    kind_ = event.type.value
+                    if kind_ == "turn_end":
+                        clean = True
+                    elif kind_ in ("error", "interrupted"):
+                        clean = False
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(
-                        session_id, {"type": event.type.value, "data": event.data}
+                        session_id, {"type": kind_, "data": event.data}
                     )
-                    if event.type.value in _CHECKPOINTS:
+                    if kind_ in _CHECKPOINTS:
                         manager.save(session_id, engine)
+            except Exception:
+                clean = False
+                raise
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)
+                # Advance only after a clean finish. After an error or a Stop the next item may
+                # depend on work that never happened, so pause and let the user decide.
+                nxt = None
+                if clean and not manager.queue_paused(session_id):
+                    nxt = manager.pop_queued(session_id)  # None while a gate is still closed
+                    if nxt is not None:
+                        # Claim it synchronously: the awaits below yield to the loop, and the
+                        # 30s scheduler tick would otherwise pop a second item and run it
+                        # concurrently on this same session.
+                        manager.mark_running(session_id)
+                elif not clean and manager.queued_prompts(session_id):
+                    manager.pause_queue(session_id)
                 await manager.broadcast_session(
                     session_id, {"type": "turn_done", "data": {}}
                 )
+                await _broadcast_queue()
+                if nxt is not None:
+                    asyncio.create_task(
+                        run_turn(
+                            build_user_content(
+                                nxt.get("text", ""), nxt.get("attachments") or []
+                            )
+                        )
+                    )
 
         # This socket is now a live view of the session; background turns (channel delivery,
         # self-wake, durable resume) broadcast here too, not just locally driven run_turns.
         manager.register_session_client(session_id, ws.send_json)
+        # Replay the queue to a (re)connecting view — after an app restart or a dropped
+        # socket the client has no idea work is still parked for this session.
+        await _broadcast_queue()
         try:
             while True:
                 message = await ws.receive_json()
@@ -1670,8 +1715,91 @@ def create_app(manager: SessionManager) -> FastAPI:
                     # Session.userMessage), later ones may switch it (notice persisted).
                     await _apply_model(message.get("model"))
                     if text or attachments:
-                        content = build_user_content(text, attachments)
-                        asyncio.create_task(run_turn(content))
+                        not_before = message.get("not_before")
+                        if not_before:
+                            # Scheduled: queue it as a gate even when idle — that IS the point
+                            # ("run this at 9pm"). Everything behind it waits too.
+                            manager.enqueue_prompt(
+                                session_id, text, attachments, float(not_before)
+                            )
+                            await _broadcast_queue()
+                        elif manager.is_running(session_id):
+                            # Busy → park it rather than starting a second concurrent turn on
+                            # the same session (that interleaves two runs into one history).
+                            # It auto-runs on turn_done; the user can promote it to a steer.
+                            manager.enqueue_prompt(session_id, text, attachments)
+                            await _broadcast_queue()
+                        else:
+                            content = build_user_content(text, attachments)
+                            asyncio.create_task(run_turn(content))
+                elif kind == "steer":
+                    # Inject straight into the RUNNING turn — the engine picks it up at its
+                    # next step (iteration boundary), so it lands in seconds, not instantly.
+                    steer_text = (message.get("text") or "").strip()
+                    if steer_text and manager.is_running(session_id):
+                        engine.queue_steering(steer_text)
+                        await manager.broadcast_session(
+                            session_id,
+                            {"type": "steer_queued", "data": {"text": steer_text}},
+                        )
+                elif kind == "queue_promote":
+                    item = manager.remove_queued(session_id, str(message.get("id", "")))
+                    if item is not None:
+                        item_text = item.get("text", "")
+                        if manager.is_running(session_id) and item_text:
+                            engine.queue_steering(item_text)
+                            await manager.broadcast_session(
+                                session_id,
+                                {"type": "steer_queued", "data": {"text": item_text}},
+                            )
+                        else:
+                            # Turn ended between queueing and promoting → just run it now.
+                            asyncio.create_task(
+                                run_turn(
+                                    build_user_content(
+                                        item_text, item.get("attachments") or []
+                                    )
+                                )
+                            )
+                        await _broadcast_queue()
+                elif kind == "queue_remove":
+                    if manager.remove_queued(session_id, str(message.get("id", ""))):
+                        await _broadcast_queue()
+                elif kind == "queue_edit":
+                    if manager.edit_queued(
+                        session_id,
+                        str(message.get("id", "")),
+                        (message.get("text") or "").strip(),
+                    ):
+                        await _broadcast_queue()
+                elif kind == "queue_reorder":
+                    manager.reorder_queue(
+                        session_id, [str(i) for i in (message.get("order") or [])]
+                    )
+                    await _broadcast_queue()
+                elif kind == "queue_pause":
+                    manager.pause_queue(session_id)
+                    await _broadcast_queue()
+                elif kind == "queue_resume":
+                    manager.resume_queue(session_id)
+                    # Idle with a ready head → start it now instead of waiting up to 30s for
+                    # the scheduler tick to notice.
+                    item = (
+                        None
+                        if manager.is_running(session_id)
+                        else manager.pop_queued(session_id)
+                    )
+                    if item is not None:
+                        manager.mark_running(session_id)  # claim before awaiting (tick race)
+                    await _broadcast_queue()
+                    if item is not None:
+                        asyncio.create_task(
+                            run_turn(
+                                build_user_content(
+                                    item.get("text", ""), item.get("attachments") or []
+                                )
+                            )
+                        )
         except WebSocketDisconnect:
             pass
         finally:

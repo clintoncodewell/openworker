@@ -1710,12 +1710,15 @@ export class Session {
    * exactly what the user sees — immune to set_model races across reconnects (a new cowork
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
-  userMessage(text: string, attachments?: unknown[], model?: string) {
+  /** `notBefore` (epoch SECONDS) schedules instead of sending: the prompt is queued as a
+   * "not before" gate, so it can't run early and everything behind it waits too. */
+  userMessage(text: string, attachments?: unknown[], model?: string, notBefore?: number) {
     this.send({
       type: "user_message",
       text,
       ...(model ? { model } : {}),
       ...(attachments?.length ? { attachments } : {}),
+      ...(notBefore ? { not_before: notBefore } : {}),
     });
   }
 
@@ -1759,6 +1762,40 @@ export class Session {
 
   setModel(model: string) {
     this.send({ type: "set_model", model });
+  }
+
+  // -- prompt queue + steering ------------------------------------------------
+  // Enter queues (userMessage while busy); ⌘Enter steers. A steer is injected into the
+  // RUNNING turn and lands at the agent's next step — never instantly, so the UI says
+  // "waiting for next step" until the agent actually picks it up.
+  steer(text: string) {
+    this.send({ type: "steer", text });
+  }
+
+  /** Pull a queued item out and inject it into the running turn (or run it if the turn
+   * finished in the meantime — the server decides, so there's no client-side race). */
+  queuePromote(id: string) {
+    this.send({ type: "queue_promote", id });
+  }
+
+  queueRemove(id: string) {
+    this.send({ type: "queue_remove", id });
+  }
+
+  queueEdit(id: string, text: string) {
+    this.send({ type: "queue_edit", id, text });
+  }
+
+  queueReorder(order: string[]) {
+    this.send({ type: "queue_reorder", order });
+  }
+
+  queuePause() {
+    this.send({ type: "queue_pause" });
+  }
+
+  queueResume() {
+    this.send({ type: "queue_resume" });
   }
 
   close() {

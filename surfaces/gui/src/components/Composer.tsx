@@ -60,6 +60,10 @@ interface Props {
   onConfigureVoiceInput?: () => void;
   onSend: (text: string, attachments?: Attachment[]) => void;
   onInterrupt: () => void;
+  // ⌘/Ctrl+Enter while a turn runs: inject into the live turn instead of queueing behind it.
+  onSteer?: (text: string) => void;
+  // Queue as a "not before" gate. `at` is epoch SECONDS.
+  onSchedule?: (text: string, attachments: Attachment[], at: number) => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
   // When set (Code/Cowork), the Mode menu is shown. The folder/roots + branch controls left the
@@ -89,6 +93,9 @@ export function Composer(props: Props) {
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
+  // Armed schedule (epoch seconds) — Enter then schedules instead of sending. Null = off.
+  const [scheduledFor, setScheduledFor] = useState<number | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const noticeTimer = useRef<number | null>(null);
@@ -254,23 +261,44 @@ export function Composer(props: Props) {
 
   const needsModel = props.modelReady === false;
 
-  const submit = () => {
+  // Enter queues while a turn runs (the server parks it), ⌘/Ctrl+Enter steers the live turn,
+  // and an armed schedule turns Enter into "schedule for <time>". The composer is never locked.
+  const submit = (opts?: { steer?: boolean }) => {
     const t = text.trim();
-    if ((!t && attachments.length === 0) || props.running || dictation?.recording || dictationBusy) return;
+    if ((!t && attachments.length === 0) || dictation?.recording || dictationBusy) return;
     // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
       props.onConnectModel?.();
       return;
     }
-    props.onSend(t, attachments);
+    if (opts?.steer && props.running) {
+      props.onSteer?.(t);
+    } else if (scheduledFor) {
+      props.onSchedule?.(t, attachments, scheduledFor);
+      setScheduledFor(null);
+    } else {
+      // Server-side decision: runs now when idle, queues when busy. Keeping the branch on the
+      // server means a turn ending mid-keystroke can't drop the prompt on the floor.
+      props.onSend(t, attachments);
+    }
     setText("");
     setAttachments([]);
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      submit({ steer: props.running });
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
+      return;
+    }
+    if (e.key === "Escape" && scheduleOpen) {
+      e.preventDefault();
+      setScheduleOpen(false);
     }
   };
 
