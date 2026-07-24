@@ -1,0 +1,28 @@
+coworker/providers/anthropic_provider.py
+  s_ad83e26c6e479b::t_d91a452e4d3584 359-361
+  s_ad83e26c6e479b::t_7db2be9dff2d9b 350
+  s_ad83e26c6e479b::t_637d7fc05351b0 376
+coworker/server/manager.py
+  s_ad83e26c6e479b::t_5745a35b804fc4 1412
+coworker/providers/registry.py
+  s_ad83e26c6e479b::t_8d83a1e549d3d4 278-300
+  s_ad83e26c6e479b::t_1748760bc10fc1 123-134
+coworker/providers/matrix.py
+  s_ad83e26c6e479b::t_93b3cca9fe1d36 75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "57a62d98e317c87d1bbd8259b02057df8c2ce2d8",
+  "prompts": {},
+  "sessions": {
+    "s_ad83e26c6e479b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76722c1-9e39-442b-93a0-7c3e8776d6df",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
