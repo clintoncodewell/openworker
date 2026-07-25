@@ -1,0 +1,51 @@
+tests/test_provider_router.py
+  s_e54c2276145d1e::t_f7f41d87bfe581 9,49-57,61-66
+  s_e54c2276145d1e::t_5c6350d82749c1 58-60
+  s_e54c2276145d1e::t_62e15048dfc278 67-68
+surfaces/gui/src/providers/logos.ts
+  s_e54c2276145d1e::t_f7f41d87bfe581 30,47
+tests/test_providers.py
+  s_e54c2276145d1e::t_f7f41d87bfe581 8-9,376-401
+  s_e54c2276145d1e::t_df220eaee0abe1 402-403
+surfaces/gui/e2e/provider-keys.spec.ts
+  s_e54c2276145d1e::t_f76f77dd27c2eb 81
+  s_e54c2276145d1e::t_f7f41d87bfe581 74-80,82-91
+surfaces/gui/e2e/fixtures.ts
+  s_e54c2276145d1e::t_141a35e6aaa795 334
+coworker/providers/matrix.py
+  s_ad83e26c6e479b::t_93b3cca9fe1d36 75-76
+coworker/providers/anthropic_provider.py
+  s_ad83e26c6e479b::t_d91a452e4d3584 359-361
+  s_e54c2276145d1e::t_f7f41d87bfe581 376-379
+  s_ad83e26c6e479b::t_7db2be9dff2d9b 350
+coworker/server/manager.py
+  s_ad83e26c6e479b::t_5745a35b804fc4 1477
+coworker/providers/registry.py
+  s_e54c2276145d1e::t_141a35e6aaa795 284
+  s_ad83e26c6e479b::t_1748760bc10fc1 123-134
+  s_ad83e26c6e479b::t_8d83a1e549d3d4 278-283,285-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "3377e7bb81760793b19392422ec50b4b09b14559",
+  "prompts": {},
+  "sessions": {
+    "s_ad83e26c6e479b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f76722c1-9e39-442b-93a0-7c3e8776d6df",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_e54c2276145d1e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9352-28e8-7b80-9db4-655824c5d8e2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": null
+    }
+  }
+}
