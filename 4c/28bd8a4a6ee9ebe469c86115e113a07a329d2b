@@ -1,0 +1,22 @@
+surfaces/gui/e2e/nav-collapse.spec.ts
+  s_e54c2276145d1e::t_fa354ed73f3a9b 60-62
+  s_e54c2276145d1e::t_4df16dbc051afd 26
+  s_e54c2276145d1e::t_070ea582a59236 33-55,57,59,63-66
+  s_e54c2276145d1e::t_bb387d951efd7e 56,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "4c28bd8a4a6ee9ebe469c86115e113a07a329d2b",
+  "prompts": {},
+  "sessions": {
+    "s_e54c2276145d1e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9352-28e8-7b80-9db4-655824c5d8e2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
