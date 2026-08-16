@@ -69,6 +69,7 @@ from ..mcp import (
 )
 from ..memory import MemoryStore, Scope, SQLiteMemoryStore
 from ..permissions import Mode
+from ..prompt_queue import PromptQueue
 from ..agents import list_agents as _list_agents
 from ..providers import (
     ProviderClient,
@@ -140,24 +141,18 @@ class SessionManager:
         # Prompts submitted while a turn is running park here and auto-run in order when it
         # ends; promoting one instead steers it into the LIVE turn (engine.queue_steering).
         # Persisted so an app restart / dev-reload never silently drops queued work.
-        self._prompt_queue: dict[str, list[dict[str, Any]]] = {}
-        self._queue_paused: set[str] = set()
         self._queue_path = base / "prompt_queue.json"
-        try:
-            if self._queue_path.is_file():
-                raw = json.loads(self._queue_path.read_text(encoding="utf-8"))
-                self._prompt_queue = raw.get("queues") or {}
-                # Restored work never auto-runs. The turn it was queued behind died with the
-                # process, so resuming is the user's call — surprising them with shell/file
-                # work on launch is exactly what we don't want.
-                self._queue_paused = {s for s, q in self._prompt_queue.items() if q}
-        except (OSError, ValueError, AttributeError):
-            self._prompt_queue, self._queue_paused = {}, set()  # never crash boot
+        self.prompt_queue = PromptQueue(self._queue_path)
         # Sessions with an auto-title LLM call in flight (FB-010) — one call at a time.
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
         self._autotitle_attempts: dict[str, int] = {}
         self.secrets = SecretStore()
+        # Browser sign-in state must live for the process lifetime so /v1/providers can
+        # report authorizing/errors while the callback completes in a background thread.
+        from ..providers.chatgpt_auth import ChatGPTAuthManager
+
+        self._chatgpt_auth = ChatGPTAuthManager(self.secrets)
         # No explicit provider injected → route by the model's `provider:` prefix (OpenAI default,
         # Ollama, …). Tests inject a provider directly and bypass the router. The same router is
         # shared by every engine and the `/v1/chat/completions` proxy.
@@ -799,7 +794,8 @@ class SessionManager:
         engine = self.get_engine(item.session_id)
         if engine is None or not hasattr(engine, "resume"):
             return
-        self.mark_running(item.session_id)
+        if not self.try_mark_running(item.session_id):
+            return
         try:
             async for _event in engine.resume():
                 pass
@@ -1339,7 +1335,11 @@ class SessionManager:
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
             profile = self.secrets.get(f"provider:{d.name}") or {}
-            if d.needs_key:
+            oauth_status: dict[str, Any] = {}
+            if d.auth == "oauth":
+                oauth_status = self._chatgpt_auth.status()
+                configured = bool(oauth_status["connected"])
+            elif d.needs_key:
                 configured = bool(profile.get("api_key")) or bool(
                     d.env_key and os.environ.get(d.env_key)
                 )
@@ -1363,6 +1363,9 @@ class SessionManager:
                     "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
                         d.name
                     ),
+                    "authorizing": bool(oauth_status.get("authorizing")),
+                    "auth_error": oauth_status.get("last_error"),
+                    "account": oauth_status.get("account") or None,
                 }
             )
         return out
@@ -1425,13 +1428,13 @@ class SessionManager:
     # Suggestions for the OpenAI-compatible vendor providers (checked against vendor docs
     # 2026-07-04; refresh alongside `recommended_model` in providers/registry.py).
     COMPAT_MODELS = {
-        "zai": ["glm-5.2", "glm-4.6"],
-        "zai-coding": ["glm-4.6", "glm-4.5"],
+        "zai": ["glm-5.3", "glm-5.2", "glm-4.6"],
+        "zai-coding": ["glm-5.3", "glm-4.6", "glm-4.5"],
         "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"],
         "kimi": ["kimi-k2.6", "kimi-k2.5"],
         "minimax": ["MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M3"],
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
-        "xai": ["grok-4.3", "grok-4"],
+        "xai": ["grok-4.6", "grok-4.5", "grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
     }
 
@@ -1495,6 +1498,117 @@ class SessionManager:
             self.set_default_model(added)
         return {"ok": True, "provider": name, "recommended_model": rec}
 
+    # -- council ----------------------------------------------------------------
+    def council_config(self) -> dict[str, Any]:
+        """The council's editable config, plus what the GUI needs to render the editor:
+        the shipped prompt defaults (for "reset"), the valid source kinds, and the panel
+        that WOULD run right now, so the roles beside each model are the real ones."""
+        from ..council import SOURCE_KINDS, load_config
+        from ..council.core import default_panel
+
+        cfg = load_config()
+        panel = cfg.panel or default_panel(self.secrets)
+        return {
+            **cfg.to_dict(),
+            "source_kinds": list(SOURCE_KINDS),
+            "resolved_panel": [
+                {"model": m, "role": cfg.role_for(i)["name"]} for i, m in enumerate(panel)
+            ],
+            "resolved_chair": cfg.chair_model or self.model,
+        }
+
+    def set_council_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Merge a partial edit into the stored config. Partial so the GUI can save one
+        pane (prompts, say) without having to round-trip the sources it never showed."""
+        from ..council import CouncilConfig, load_config, save_config
+
+        current = load_config().to_dict()
+        for key in ("defaults", "default_roles"):  # derived, never stored
+            current.pop(key, None)
+        merged = {**current, **{k: v for k, v in (body or {}).items() if k in current}}
+        # `prompts` is nested per preset, so a top-level replace loses the OTHER preset's
+        # overrides — saving an analysis prompt would silently wipe every decision one.
+        incoming = (body or {}).get("prompts")
+        if isinstance(incoming, dict):
+            merged["prompts"] = {**(current.get("prompts") or {})}
+            for preset, phases in incoming.items():
+                if isinstance(phases, dict):
+                    merged["prompts"][preset] = {
+                        **(merged["prompts"].get(preset) or {}),
+                        **phases,
+                    }
+        save_config(CouncilConfig.from_dict(merged))
+        return {"ok": True, **self.council_config()}
+
+    def test_council_source(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Resolve ONE source and report what came back, so a bad path or glob is a visible
+        error at edit time instead of a silently thinner brief at council time."""
+        from ..council import Source
+        from ..council.sources import resolve
+
+        src = Source(
+            kind=str(body.get("kind") or ""),
+            target=str(body.get("target") or ""),
+            label=str(body.get("label") or ""),
+            options=dict(body.get("options") or {}),
+        )
+        result = (resolve([src], self.secrets) or [{}])[0]
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+        text = result.get("text") or ""
+        return {
+            "ok": True,
+            "chars": len(text),
+            "truncated": bool(result.get("truncated")),
+            "preview": text[:2000],
+        }
+
+    def council_runs(self) -> list[dict[str, Any]]:
+        """Past council runs, newest first — the on-disk record of how each finding was
+        reached. Directory names sort chronologically (they start with a UTC stamp)."""
+        from ..council import runs_dir
+
+        base = runs_dir()
+        if not base.is_dir():
+            return []
+        out: list[dict[str, Any]] = []
+        for d in sorted(base.iterdir(), reverse=True):
+            if not d.is_dir():
+                continue
+            try:
+                mtime = d.stat().st_mtime
+            except OSError:
+                continue
+            out.append(
+                {
+                    "id": d.name,
+                    "updated_at": mtime,
+                    "files": sorted(f.name for f in d.glob("*.md")),
+                }
+            )
+        return out
+
+    def council_run(self, run_id: str) -> dict[str, Any]:
+        """One run's markdown files. `run_id` is a directory NAME, never a path: resolving
+        it and checking containment stops `../../secrets.json` reaching the reader."""
+        from ..council import runs_dir
+
+        base = runs_dir().resolve()
+        target = (base / run_id).resolve()
+        if not target.is_relative_to(base) or not target.is_dir():
+            return {"ok": False, "error": "no such council run"}
+        files = {}
+        for f in sorted(target.glob("*.md")):
+            # Containing the DIRECTORY is not enough: a `finding.md` symlinked at any file
+            # on the box would be read and returned as if it were part of the run.
+            if not f.resolve().is_relative_to(target):
+                continue
+            try:
+                files[f.name] = f.read_text(encoding="utf-8")
+            except OSError as exc:
+                files[f.name] = f"[unreadable: {exc}]"
+        return {"ok": True, "id": run_id, "files": files}
+
     def remove_provider(self, name: str) -> dict[str, Any]:
         """Forget a provider's stored config (Settings ▸ Models "Remove key"). The whole
         `provider:<name>` profile goes — key, endpoint, key_set_at — so the provider reads
@@ -1502,7 +1616,10 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
-        self.secrets.delete(f"provider:{name}")
+        if d.auth == "oauth":
+            self._chatgpt_auth.sign_out()
+        else:
+            self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
@@ -1517,6 +1634,15 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
+        if d.auth == "oauth":
+            return {
+                "ok": self._provider_configured(name),
+                "error": (
+                    None
+                    if self._provider_configured(name)
+                    else "Sign in with ChatGPT first."
+                ),
+            }
         fields = fields or {}
         profile = self.secrets.get(f"provider:{name}") or {}
         api_key = (fields.get("api_key") or profile.get("api_key") or "").strip()
@@ -1536,14 +1662,14 @@ class SessionManager:
         return "openai"
 
     def _provider_configured(self, name: str) -> bool:
-        d = get_descriptor(name)
-        if d is None:
-            return False
-        if not d.needs_key:
-            return True  # keyless (Ollama)
-        profile = self.secrets.get(f"provider:{name}") or {}
-        return bool(profile.get("api_key")) or bool(
-            d.env_key and os.environ.get(d.env_key)
+        from ..providers.registry import provider_configured
+
+        return provider_configured(name, self.secrets)
+
+    def start_chatgpt_sign_in(self) -> dict[str, Any]:
+        """Start local PKCE sign-in; completion stores tokens and enables the picker model."""
+        return self._chatgpt_auth.start_sign_in(
+            on_success=lambda: self.set_provider("chatgpt", {})
         )
 
     # -- settings / prefs (model API key, default model, onboarding) -------------
@@ -2483,12 +2609,23 @@ class SessionManager:
     def mark_running(self, session_id: str) -> None:
         self._running_sessions.add(session_id)
 
+    def try_mark_running(self, session_id: str) -> bool:
+        """Atomically acquire this session's one-turn lease (no await between check and add)."""
+        if session_id in self._running_sessions:
+            return False
+        self._running_sessions.add(session_id)
+        return True
+
     def mark_idle(self, session_id: str) -> None:
         self._running_sessions.discard(session_id)
         # Every turn path (WS, background delivery, durable resume) marks idle when it
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
         # can never add latency to the response itself.
         self._maybe_autotitle(session_id)
+
+    def release_running_claim(self, session_id: str) -> None:
+        """Release ownership when no turn actually began (so post-turn hooks do not run)."""
+        self._running_sessions.discard(session_id)
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self._running_sessions
@@ -2497,14 +2634,6 @@ class SessionManager:
     # Submitted-while-busy prompts wait here instead of colliding with the running turn
     # (two concurrent runs on one session corrupt its message history). The WS pops the
     # next one on turn_done; promote-to-steer pulls one out and injects it mid-turn.
-
-    def _save_prompt_queue(self) -> None:
-        try:
-            self._queue_path.write_text(
-                json.dumps({"queues": self._prompt_queue}), encoding="utf-8"
-            )
-        except OSError:
-            pass  # best-effort durability; a lost queue must never break a turn
 
     def enqueue_prompt(
         self,
@@ -2516,76 +2645,66 @@ class SessionManager:
         """Park a prompt. `not_before` (epoch seconds) makes it a scheduled GATE: it can't run
         early, and because the queue runs strictly in order, nothing behind it runs either —
         which is what makes "start this whole queue at 9pm" just work."""
-        item = {
-            "id": "q-" + uuid.uuid4().hex[:8],
-            "text": text,
-            "attachments": attachments or [],
-            "created_at": time.time(),
-            "not_before": not_before,
-        }
-        self._prompt_queue.setdefault(session_id, []).append(item)
-        self._save_prompt_queue()
-        return item
+        return self.prompt_queue.enqueue(session_id, text, attachments, not_before)
 
     def queued_prompts(self, session_id: str) -> list[dict[str, Any]]:
-        return list(self._prompt_queue.get(session_id) or [])
+        return self.prompt_queue.snapshot(session_id)["items"]
 
     def remove_queued(self, session_id: str, item_id: str) -> Optional[dict[str, Any]]:
         """Remove and RETURN the item — promote-to-steer reuses the returned text."""
-        items = self._prompt_queue.get(session_id) or []
-        for i, item in enumerate(items):
-            if item.get("id") == item_id:
-                found = items.pop(i)
-                self._save_prompt_queue()
-                return found
-        return None
+        return self.prompt_queue.remove(session_id, item_id)
 
-    def pop_queued(self, session_id: str) -> Optional[dict[str, Any]]:
-        """Pop the head ONLY if it's runnable now. A head still inside its `not_before` window
-        gates the whole queue (strict order), so this returns None rather than skipping it."""
-        items = self._prompt_queue.get(session_id) or []
-        if not items:
+    def claim_next_queued(self, session_id: str) -> Optional[dict[str, Any]]:
+        """Acquire turn ownership and durably claim the ready head as one transition."""
+        if not self.try_mark_running(session_id):
             return None
-        head = items[0]
-        not_before = head.get("not_before")
-        if not_before and time.time() < float(not_before):
+        try:
+            claim = self.prompt_queue.claim_ready(session_id)
+        except BaseException:
+            self.release_running_claim(session_id)
+            raise
+        if claim is None:
+            self.release_running_claim(session_id)
+        return claim
+
+    def claim_queued(self, session_id: str, item_id: str) -> Optional[dict[str, Any]]:
+        if not self.try_mark_running(session_id):
             return None
-        item = items.pop(0)
-        self._save_prompt_queue()
-        return item
+        try:
+            claim = self.prompt_queue.claim(session_id, item_id)
+        except BaseException:
+            self.release_running_claim(session_id)
+            raise
+        if claim is None:
+            self.release_running_claim(session_id)
+        return claim
+
+    def ack_queued_claim(self, claim_id: str) -> bool:
+        return self.prompt_queue.ack(claim_id)
+
+    def release_queued_claim(self, claim_id: str, *, pause: bool = True) -> bool:
+        return self.prompt_queue.release(claim_id, pause=pause)
 
     def queue_paused(self, session_id: str) -> bool:
-        return session_id in self._queue_paused
+        return bool(self.prompt_queue.snapshot(session_id)["paused"])
 
     def pause_queue(self, session_id: str) -> None:
         """Halt auto-advance. Set after an error/Stop: the next item may well depend on the
         work that just failed, so it must never start on its own."""
-        self._queue_paused.add(session_id)
+        self.prompt_queue.pause(session_id)
 
     def resume_queue(self, session_id: str) -> None:
-        self._queue_paused.discard(session_id)
+        self.prompt_queue.resume(session_id)
 
     def edit_queued(
         self, session_id: str, item_id: str, text: str
     ) -> Optional[dict[str, Any]]:
-        for item in self._prompt_queue.get(session_id) or []:
-            if item.get("id") == item_id:
-                item["text"] = text
-                self._save_prompt_queue()
-                return item
-        return None
+        return self.prompt_queue.edit(session_id, item_id, text)
 
     def reorder_queue(self, session_id: str, order: list[str]) -> list[dict[str, Any]]:
         """Reorder to `order`; ids missing from it keep their relative position at the end,
         so a stale client list can never drop an item."""
-        items = self._prompt_queue.get(session_id) or []
-        by_id = {item.get("id"): item for item in items}
-        seen = set(order)
-        reordered = [by_id[i] for i in order if i in by_id]
-        reordered += [item for item in items if item.get("id") not in seen]
-        self._prompt_queue[session_id] = reordered
-        self._save_prompt_queue()
-        return list(reordered)
+        return self.prompt_queue.reorder(session_id, order)
 
     async def _scheduler_extra_tick(self) -> None:
         """The scheduler's one extra-tick hook, now shared: resume self-wakes, then start any
@@ -2597,30 +2716,36 @@ class SessionManager:
         """Scheduler tick: start any queue whose head has come due while the session sits idle.
         This is what fires a scheduled prompt with no window open — and it catches up a gate
         whose time passed while the app was shut down."""
-        for session_id in list(self._prompt_queue):
-            if self.is_running(session_id) or self.queue_paused(session_id):
+        for session_id in self.prompt_queue.sessions():
+            claim = self.claim_next_queued(session_id)
+            if claim is None:
                 continue
-            item = self.pop_queued(session_id)  # None while the head is still gated
-            if item is None or not item.get("text"):
-                continue
-            # Don't pre-mark running: `deliver_to_session` owns that, and a session already
-            # marked busy would take its STEER path instead of starting the turn.
+            item = claim["item"]
             try:
-                await self.deliver_to_session(session_id, item["text"])
+                await self.deliver_to_session(
+                    session_id,
+                    item["text"],
+                    attachments=item.get("attachments") or [],
+                    _ownership_claimed=True,
+                    _queue_claim_id=claim["claim_id"],
+                )
             except Exception:
                 logging.getLogger(__name__).exception(
                     "queued prompt failed for %s", session_id
                 )
-                # Put it back at the head and stop auto-advancing — the user decides.
-                self._prompt_queue.setdefault(session_id, []).insert(0, item)
-                self._save_prompt_queue()
-                self.pause_queue(session_id)
 
     async def _resume_wake(self, wake) -> None:
         await self.deliver_to_session(wake.session_id, self._wake_message(wake))
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None
+        self,
+        session_id: str,
+        message: str,
+        *,
+        source: Optional[dict[str, Any]] = None,
+        attachments: Optional[list] = None,
+        _ownership_claimed: bool = False,
+        _queue_claim_id: Optional[str] = None,
     ) -> None:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
@@ -2629,17 +2754,25 @@ class SessionManager:
         by self-wake and channel-subscription delivery. `source` is the display-only MessageSource
         sidecar for connector messages (framed `message` stays the model-facing text).
         """
-        if self.is_running(session_id):
+        if not _ownership_claimed and not self.try_mark_running(session_id):
             engine = self._engines.get(session_id)
             if engine is not None:
                 engine.queue_steering(message, source)
             return
         engine = self.get_engine(session_id)
         if engine is None:
+            if _queue_claim_id:
+                self.release_queued_claim(_queue_claim_id)
+            self.release_running_claim(session_id)
             return
-        self.mark_running(session_id)
+        if _queue_claim_id:
+            self.ack_queued_claim(_queue_claim_id)
+        clean = False
         try:
-            async for event in engine.run(message, source=source):
+            from ..attachments import build_user_content
+
+            content = build_user_content(message, attachments)
+            async for event in engine.run(content, source=source):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
@@ -2648,11 +2781,16 @@ class SessionManager:
                 # A background turn has no user watching to read an inline error: a dead model or
                 # tool failure would otherwise vanish. Log it and park it in the dead-letter store.
                 if event.type.value == "error":
+                    clean = False
                     reason = (event.data or {}).get("error", "unknown error")
                     logger.warning(
                         "background turn failed for %s: %s", session_id, reason
                     )
                     self.unrouted.record(session_id, "-", message, reason=reason)
+                elif event.type.value == "turn_end":
+                    clean = True
+                elif event.type.value == "interrupted":
+                    clean = False
             self.save(session_id, engine)
         except (
             Exception
@@ -2664,7 +2802,27 @@ class SessionManager:
             )
         finally:
             self.mark_idle(session_id)
+            if not clean and self.queued_prompts(session_id):
+                self.pause_queue(session_id)
+            await self.broadcast_session(
+                session_id,
+                {
+                    "type": "queue_updated",
+                    "data": self.prompt_queue.snapshot(session_id),
+                },
+            )
             await self.broadcast_session(session_id, {"type": "turn_done", "data": {}})
+        if clean:
+            claim = self.claim_next_queued(session_id)
+            if claim is not None:
+                item = claim["item"]
+                await self.deliver_to_session(
+                    session_id,
+                    item["text"],
+                    attachments=item.get("attachments") or [],
+                    _ownership_claimed=True,
+                    _queue_claim_id=claim["claim_id"],
+                )
 
     # -- channel subscriptions (inbound messaging) ------------------------------
     async def _dispatch_inbound(self, event) -> None:

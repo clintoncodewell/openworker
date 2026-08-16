@@ -71,3 +71,20 @@ test("non-secret fields blur-save on a configured provider (ollama endpoint)", a
   await page.getByTestId("set-provider-ollama").click();
   await expect(page.getByTestId("set-field-base_url")).toHaveValue("http://127.0.0.1:9999");
 });
+
+test("ChatGPT subscription signs in from the Models screen", async ({ page }) => {
+  await openModels(page);
+  await expect(page.getByTestId("set-provider-chatgpt")).toContainText("Sign in with ChatGPT");
+  await page.getByTestId("set-provider-chatgpt").click();
+  await expect(page.getByText(/no API key or separate API billing/i)).toBeVisible();
+  await page.getByTestId("set-oauth-signin").click();
+  await expect(page.getByTestId("set-provider-chatgpt")).toContainText("✓ Signed in", {
+    timeout: 5_000,
+  });
+  await page.getByTestId("set-provider-chatgpt").click();
+  const models = page.locator(".mlist-row");
+  await expect(models).toHaveCount(9);
+  for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.5", "gpt-5.4", "gpt-5.4-pro", "gpt-5-mini", "gpt-5.2"]) {
+    await expect(page.locator(`[title="chatgpt:${id}"]`)).toBeVisible();
+  }
+});

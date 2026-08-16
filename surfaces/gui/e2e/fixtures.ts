@@ -327,6 +327,7 @@ const baseName = (p: string) => p.split("/").filter(Boolean).pop() || p;
 const PROVIDERS = [
   // openai: configured + used (drives the "Last used" sub-line and the status dot).
   { name: "openai", title: "OpenAI", needs_key: true, fields: [{ key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["gpt-5.5"], key_set_at: "2026-06-12", last_used_at: Math.floor(Date.now() / 1000) - 7200 },
+  { name: "chatgpt", title: "ChatGPT subscription", needs_key: false, auth: "oauth", fields: [], configured: false, authorizing: false, auth_error: null, account: null, values: {}, suggested_models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.5", "gpt-5.4", "gpt-5.4-pro", "gpt-5-mini", "gpt-5.2"], recommended_model: "gpt-5.4-mini", blurb: "Use your ChatGPT account and subscription allowance — no API key or separate API billing.", key_set_at: null, last_used_at: null },
   // anthropic: configured but never used ("Not used yet").
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
@@ -1230,6 +1231,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
       return /bad/i.test(key)
         ? json({ ok: false, error: "Invalid API key." })
         : json({ ok: true });
+    }
+    if (p.endsWith("/v1/providers/chatgpt/signin") && m === "POST") {
+      const prov = providers.find((x) => x.name === "chatgpt");
+      prov.configured = true;
+      prov.authorizing = false;
+      prov.account = "acct_test";
+      return json({ ok: true, started: true });
     }
     // save a provider key — flips `configured`, stamps key_set_at (backend set_provider parity).
     if (p.endsWith("/v1/providers") && m === "POST") {

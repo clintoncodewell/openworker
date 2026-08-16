@@ -3,6 +3,7 @@ import {
   getProviders,
   removeProvider,
   setProvider,
+  signInChatGPT,
   verifyProvider,
   type ProviderInfo,
 } from "../api";
@@ -82,6 +83,7 @@ export interface ProviderSetupState {
   backToGallery: () => void;
   runTestAndSave: () => Promise<boolean>;
   removeKey: () => Promise<void>;
+  signInOAuth: () => Promise<void>;
   cancelBackTimer: () => void;
   statusFor: (p: ProviderInfo, opts?: { lastUsed?: boolean }) => ReactNode;
   // Blur-save for non-secret fields on an already-configured provider (the Test button is
@@ -122,6 +124,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   const info = providers.find((p) => p.name === sel);
   const credentialed = !!info?.configured && !!info?.needs_key;
+  const oauthConnected = !!info?.configured && info?.auth === "oauth";
 
   const openProvider = (name: string) => {
     const p = providers.find((x) => x.name === name);
@@ -211,7 +214,52 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setVerify({ state: "idle" });
   };
 
+  const signInOAuth = async () => {
+    if (sel !== "chatgpt") return;
+    setVerify({ state: "testing" });
+    const started = await signInChatGPT().catch(() => ({ ok: false, error: "Couldn't start sign-in." }));
+    if (!started.ok) {
+      setVerify({ state: "error", msg: started.error || "Couldn't start sign-in." });
+      return;
+    }
+    // Browser completion is out-of-band. Fast polling keeps the card feeling immediate.
+    for (let i = 0; i < 240; i += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      const next = await getProviders().catch(() => null);
+      if (!next) continue;
+      setProviders(next);
+      const oauth = next.find((p) => p.name === sel);
+      if (oauth?.configured) {
+        setVerify({ state: "ok" });
+        opts?.onSaved?.();
+        backTimer.current = window.setTimeout(() => {
+          setSel(null);
+          setVerify({ state: "idle" });
+        }, 700);
+        return;
+      }
+      if (!oauth?.authorizing) {
+        setVerify({ state: "error", msg: oauth?.auth_error || "ChatGPT sign-in didn't finish." });
+        return;
+      }
+    }
+    setVerify({ state: "error", msg: "ChatGPT sign-in timed out." });
+  };
+
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
+    if (p.auth === "oauth") {
+      if (p.authorizing)
+        return <span className="block text-[11.5px] text-muted truncate">Signing in…</span>;
+      if (p.configured) {
+        const used = o?.lastUsed ? relTime(p.last_used_at) : null;
+        return (
+          <span className="block text-[11.5px] text-ok font-medium truncate">
+            ✓ Signed in{used ? <span className="text-muted font-normal"> · used {used}</span> : ""}
+          </span>
+        );
+      }
+      return <span className="block text-[11.5px] text-faint truncate">Sign in with ChatGPT</span>;
+    }
     if (p.configured && p.needs_key) {
       const used = o?.lastUsed ? relTime(p.last_used_at) : null;
       return (
@@ -246,7 +294,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     showEndpoint,
     setShowEndpoint,
     keylessOk,
-    credentialed,
+    credentialed: credentialed || oauthConnected,
     // The in-field saved state (§39): green border + pill INSIDE the key box — shown
     // for stored credentials and fresh test-passes alike; typing clears it.
     savedState: (credentialed && !dirty) || verify.state === "ok",
@@ -255,6 +303,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     backToGallery,
     runTestAndSave,
     removeKey,
+    signInOAuth,
     saveField,
     fieldSaved,
     cancelBackTimer: () => {
@@ -330,7 +379,27 @@ export function ProviderForm({
       </div>
       {info?.blurb && <p className="text-[11.5px] text-faint mt-1">{info.blurb}</p>}
 
-      {(info?.fields || []).map((f) => {
+      {info?.auth === "oauth" && (
+        <div className="mt-5">
+          <button
+            className="px-4 py-2 rounded-lg bg-accent text-white text-[13px] font-medium disabled:opacity-50"
+            onClick={() => void ps.signInOAuth()}
+            disabled={ps.verify.state === "testing" || info.configured}
+            data-testid={`${tp}-oauth-signin`}
+          >
+            {info.configured
+              ? "✓ Signed in"
+              : ps.verify.state === "testing"
+                ? "Waiting for browser…"
+                : "Sign in with ChatGPT"}
+          </button>
+          <p className="text-[11.5px] text-faint mt-2">
+            Opens ChatGPT in your browser. Your sign-in tokens stay on this computer.
+          </p>
+        </div>
+      )}
+
+      {info?.auth !== "oauth" && (info?.fields || []).map((f) => {
         const keyed = (info?.fields || []).some((x) => x.secret);
         // A keyed provider's base_url is an expert option — it renders BELOW the key-help
         // line as its own advanced section (owner nit 2026-07-19), not inside the loop.
@@ -406,7 +475,7 @@ export function ProviderForm({
           — takes about a minute.
         </p>
       )}
-      {info && !info.needs_key && (
+      {info && !info.needs_key && info.auth !== "oauth" && (
         <p className="text-[11.5px] text-faint mt-2">
           No API key needed — Ollama runs models on this Mac.{" "}
           <button

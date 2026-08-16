@@ -454,7 +454,10 @@ def test_registry_builds_native_gemini_provider():
     assert isinstance(provider, GeminiProvider)
     assert provider._api_key == "AIza-x"
     # no key in the profile is fine at build time — resolution is deferred to first call
-    assert isinstance(build_provider_client("gemini", {}, None), GeminiProvider)
+    # No key anywhere ⇒ refused at build. Deliberate: the alternative was falling back to
+    # GeminiProvider's own env resolution, which reads the shared GEMINI_API_KEY.
+    with pytest.raises(RuntimeError, match="No Gemini API key"):
+        build_provider_client("gemini", {}, None)
 
 
 def test_resolve_api_key_env_then_secrets(monkeypatch):

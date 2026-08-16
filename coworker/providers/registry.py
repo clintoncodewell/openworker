@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .anthropic_provider import AnthropicProvider
+from .claude_code_provider import ClaudeCodeProvider
 from .base import ProviderClient
+from .chatgpt_provider import ChatGPTProvider
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
 
@@ -69,6 +71,11 @@ class ProviderDescriptor:
     )
     # One-line note under the provider title (e.g. "Connects through X's OpenAI-compatible API").
     blurb: str = ""
+    # Browser account sign-in instead of form fields. Empty means the normal key/keyless flow.
+    auth: str = ""
+    # Liveness test for a KEYLESS provider, where "configured" is otherwise vacuously true.
+    # Must be cheap enough to run on every Settings render — a `which`, not a network call.
+    available: Optional[Callable[[], bool]] = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +85,7 @@ class ProviderDescriptor:
             "fields": [f.to_dict() for f in self.fields],
             "recommended_model": self.recommended_model,
             "blurb": self.blurb,
+            "auth": self.auth or None,
         }
 
 
@@ -101,6 +109,10 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # OpenRouter, vLLM, …) comes from the stored profile.
     base_url = ((profile or {}).get("base_url") or "").strip() or None
     return OpenAIProvider(secrets=secrets, base_url=base_url)
+
+
+def _build_chatgpt(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    return ChatGPTProvider(secrets=secrets)
 
 
 def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -133,9 +145,19 @@ def _build_zai_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClien
 
 
 def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
-    # Same deferred-key contract as anthropic (GeminiProvider/resolve_api_key).
-    api_key = ((profile or {}).get("api_key") or "").strip() or None
-    return GeminiProvider(api_key=api_key, secrets=secrets)
+    # An EXPLICIT key only — never GeminiProvider's own resolution, which reads the shared
+    # `GEMINI_API_KEY`/`GOOGLE_API_KEY` env vars. Passing `secrets=None` closes that path:
+    # on a box running other Google tooling those names hold a different account's key, and
+    # falling back to it spends money the user did not choose to spend.
+    api_key = ((profile or {}).get("api_key") or "").strip() or os.environ.get(
+        "OPENWORKER_GEMINI_API_KEY", ""
+    ).strip()
+    if not api_key:
+        raise RuntimeError(
+            "No Gemini API key configured — add one in Settings ▸ Models. "
+            "Get it from aistudio.google.com; a key made in a Cloud project bills that project."
+        )
+    return GeminiProvider(api_key=api_key)
 
 
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -158,6 +180,14 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
         api_key = ((profile or {}).get("api_key") or "").strip() or (
             os.environ.get(env_key, "").strip() if env_key else ""
         )
+        if not base_url:
+            # Only reachable for a per-tenant provider (Azure Foundry), which ships no
+            # default endpoint. Without this the SDK falls back to api.openai.com and the
+            # user's Foundry key goes to OpenAI — a wrong-vendor key leak, reported as a
+            # baffling 401.
+            raise RuntimeError(
+                f"No {vendor} endpoint configured — add it in Settings ▸ Models."
+            )
         if not api_key:
             raise RuntimeError(
                 f"No {vendor} API key configured — add it in Settings ▸ Models."
@@ -175,9 +205,20 @@ def _compat(
     recommended_model: str,
     env_key: str,
     endpoint_help: str = "",
+    vendor: str = "",
+    blurb: str = "",
 ) -> ProviderDescriptor:
-    """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint."""
-    vendor = title.split(" (")[0]
+    """Descriptor for an OpenAI-compatible vendor: key + a prefilled, editable endpoint.
+
+    `vendor` overrides the name used in field labels. It is normally derived from the
+    title, but that collapses two providers from the same vendor into one label — the two
+    Azure Foundry entries both rendered "Azure AI Foundry API key" and were
+    indistinguishable in Settings.
+    """
+    vendor = vendor or title.split(" (")[0]
+    # An endpoint the user MUST supply (their own tenant) is a required field with no
+    # prefill; a vendor's public endpoint is optional and prefilled.
+    self_hosted = not base_url
     return ProviderDescriptor(
         name=name,
         title=title,
@@ -191,7 +232,7 @@ def _compat(
             ProviderField(
                 "base_url",
                 "Endpoint",
-                required=False,
+                required=self_hosted,
                 default=base_url,
                 placeholder=base_url,
                 help=endpoint_help
@@ -201,7 +242,8 @@ def _compat(
         build=_openai_compat(vendor, base_url, env_key),
         recommended_model=recommended_model,
         env_key=env_key,
-        blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
+        blurb=blurb
+        or f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
     )
 
 
@@ -231,6 +273,29 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="OPENAI_API_KEY",
     ),
     ProviderDescriptor(
+        name="chatgpt",
+        title="ChatGPT subscription",
+        needs_key=False,
+        fields=[],
+        build=_build_chatgpt,
+        recommended_model="gpt-5.4-mini",
+        blurb="Use your ChatGPT account and subscription allowance — no API key or separate API billing.",
+        auth="oauth",
+    ),
+    ProviderDescriptor(
+        name="claude-code",
+        title="Claude (via Claude Code subscription)",
+        needs_key=False,
+        fields=[],
+        build=lambda profile, secrets: ClaudeCodeProvider(
+            binary=((profile or {}).get("binary") or "claude").strip() or "claude"
+        ),
+        available=lambda: __import__("shutil").which("claude") is not None,
+        recommended_model="claude-opus-5",
+        blurb="Runs Claude on your Claude Code subscription — no API key. Text only, so it "
+        "works as a council member but cannot be the session model.",
+    ),
+    ProviderDescriptor(
         name="anthropic",
         title="Claude (Anthropic)",
         needs_key=True,
@@ -258,11 +323,18 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Gemini API key",
                 secret=True,
                 placeholder="AIza…",
+                help="From aistudio.google.com. A key created in a Google Cloud project bills that project.",
             ),
         ],
         build=_build_gemini,
         recommended_model="gemini-3.6-flash",
-        env_key="GEMINI_API_KEY",
+        # Deliberately NOT `GEMINI_API_KEY` (owner call, 2026-08-16). That name is the
+        # Google SDK convention, so on a machine that already runs other Google tooling it
+        # is set to whatever key that tooling uses — here, a billed Cloud project. Treating
+        # it as OpenWorker's key silently spends the wrong account and cannot be turned off
+        # from Settings, because "remove key" would not remove the env var. A dedicated
+        # name means the env path only ever holds a key chosen FOR this app.
+        env_key="OPENWORKER_GEMINI_API_KEY",
     ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the
     # "point the OpenAI slot at a different endpoint" trick (owner call, 2026-07-04). Each keeps
@@ -271,7 +343,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "zai",
         "Z AI (GLM)",
         base_url="https://api.z.ai/api/paas/v4",
-        recommended_model="glm-5.2",
+        recommended_model="glm-5.3",
         env_key="ZAI_API_KEY",
         endpoint_help="Prefilled with Z AI's international endpoint. China mainland: https://open.bigmodel.cn/api/paas/v4",
     ),
@@ -295,8 +367,33 @@ DESCRIPTORS: list[ProviderDescriptor] = [
             ),
         ],
         build=_build_zai_anthropic,
-        recommended_model="glm-4.6",
+        recommended_model="glm-5.3",
         blurb="Spends your Z AI coding-plan allowance via Z AI's Anthropic-compatible API (not the pay-as-you-go /paas endpoint).",
+    ),
+    # Azure AI Foundry. Unlike every other entry here there is no vendor-wide endpoint to
+    # prefill: a Foundry resource is per-tenant, with its own hostname, key and deployment
+    # names, so the endpoint is REQUIRED and the user supplies it. Two descriptors because
+    # one Foundry resource means one endpoint + one key, and GPT and open-weight models
+    # usually live in different resources (different regions and quotas).
+    _compat(
+        "azure",
+        "Azure AI Foundry (GPT)",
+        base_url="",
+        recommended_model="gpt-5.6-sol",
+        env_key="AZURE_OPENAI_API_KEY",
+        vendor="Azure Foundry GPT",
+        endpoint_help="Your Foundry resource's OpenAI-compatible surface, e.g. https://<resource>.openai.azure.com/openai/v1",
+        blurb="Your own Azure AI Foundry GPT deployments. Paste the resource endpoint and key from the Foundry portal.",
+    ),
+    _compat(
+        "azure-oss",
+        "Azure AI Foundry (open models)",
+        base_url="",
+        recommended_model="kimi-k3",
+        env_key="AZURE_OSS_API_KEY",
+        vendor="Azure Foundry open-model",
+        endpoint_help="The Foundry resource hosting your open-weight deployments, e.g. https://<resource>.cognitiveservices.azure.com/openai/v1",
+        blurb="Open-weight models (Kimi, DeepSeek, …) on your own Azure AI Foundry resource. Model ids are YOUR deployment names.",
     ),
     _compat(
         "deepseek",
@@ -332,7 +429,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "xai",
         "xAI (Grok)",
         base_url="https://api.x.ai/v1",
-        recommended_model="grok-4.3",
+        recommended_model="grok-4.6",
         env_key="XAI_API_KEY",
     ),
     _compat(
@@ -350,7 +447,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "together",
         "Together AI",
         base_url="https://api.together.xyz/v1",
-        recommended_model="zai-org/GLM-5.2",
+        recommended_model="zai-org/GLM-5.3",
         env_key="TOGETHER_API_KEY",
     ),
     _compat(
@@ -394,6 +491,31 @@ def provider_names() -> list[str]:
 
 def get_descriptor(name: str) -> Optional[ProviderDescriptor]:
     return _BY_NAME.get(name)
+
+
+def provider_configured(name: str, secrets: Any) -> bool:
+    """Is this provider usable — has it a key (stored or from its env var), or is it
+    keyless / signed in?
+
+    The single definition of "configured". `SessionManager._provider_configured` and the
+    council's panel resolution both defer to it; when they each had their own copy they
+    disagreed, and the council silently skipped the OAuth ChatGPT provider. Reads through
+    the SecretStore so `${VAR}` refs and the local `.env` resolve the same way here as
+    they do at call time.
+    """
+    d = _BY_NAME.get(name)
+    if d is None:
+        return False
+    profile = (secrets.get(f"provider:{name}") if secrets is not None else None) or {}
+    if d.auth == "oauth":
+        return bool(profile.get("access_token"))
+    if not d.needs_key:
+        # Keyless says nothing about usable. A provider that shells out to a CLI is only
+        # configured if that CLI is actually installed, so ask before claiming it works.
+        return d.available() if d.available else True
+    return bool(profile.get("api_key")) or bool(
+        d.env_key and os.environ.get(d.env_key)
+    )
 
 
 def build_provider_client(

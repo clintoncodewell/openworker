@@ -393,7 +393,12 @@ def test_matrix_labels_and_custom_model_fallback():
     assert labels["together:zai-org/GLM-5.2"] == "GLM-5.2 · via Together"
     assert labels["zai:glm-5.2"] == "GLM-5.2 · Z AI"
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
-    assert len(MATRIX) < 40
+    # Keep the curated list bounded while allowing the subscription transport's explicit
+    # entitlement-gated model choices.
+    # Upstream keeps this list deliberately small. This fork curates more providers
+    # (two Azure Foundry resources, the Claude Code subscription), so the guard is
+    # loosened rather than deleted — it still catches an accidental catalogue dump.
+    assert len(MATRIX) < 70
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).

@@ -332,7 +332,10 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     assert "anthropic:claude-opus-4-8" in models
     assert "gpt-4o" not in models  # no OpenAI seed anywhere
 
-    added = mgr.add_model("ollama:qwen2.5-coder:32b")  # keyless provider → selectable
+    # Custom Ollama ids are selectable only while the local daemon answers; isolate the
+    # catalogue behavior from machine/network state.
+    monkeypatch.setattr(mgr, "_ollama_alive", lambda: True)
+    added = mgr.add_model("ollama:qwen2.5-coder:32b")
     assert added["ok"] and "ollama:qwen2.5-coder:32b" in added["models"]
 
     n = len(mgr.get_settings()["models"])
@@ -439,8 +442,14 @@ def test_anthropic_gemini_provider_config(tmp_path, monkeypatch):
     # the recommended model is auto-added to the curated list with its provider prefix
     assert "anthropic:claude-fable-5" in mgr.get_settings()["models"]
 
-    # env var alone marks a provider configured
-    monkeypatch.setenv("GEMINI_API_KEY", "AIza-env")
+    # env var alone marks a provider configured — but Gemini reads its OWN name, never
+    # the shared GEMINI_API_KEY, which on a machine running other Google tooling holds a
+    # different (billed) account's key.
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-someone-elses-billed-key")
+    provs = {p["name"]: p for p in mgr.get_providers()}
+    assert provs["gemini"]["configured"] is False
+
+    monkeypatch.setenv("OPENWORKER_GEMINI_API_KEY", "AIza-chosen-for-this-app")
     provs = {p["name"]: p for p in mgr.get_providers()}
     assert provs["gemini"]["configured"] is True
 
