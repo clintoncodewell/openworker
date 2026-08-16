@@ -1,0 +1,59 @@
+coworker/council/__init__.py
+  s_dc1ea3e3bce093::t_f87395bbb2210a 1-32
+coworker/council/config.py
+  s_3f16b4dbfd2cda::t_1e82c55654255e 1-416
+coworker/council/core.py
+  s_3f16b4dbfd2cda::t_ff894c32d72235 1-506
+coworker/council/scratchpad.py
+  s_3f16b4dbfd2cda::t_78833d5925dc8d 1-148
+coworker/council/usage.py
+  s_3f16b4dbfd2cda::t_d153cfd6e2c40d 1-187
+surfaces/gui/src/components/CouncilTab.test.tsx
+  s_3f16b4dbfd2cda::t_7a2b3ceb79a242 1-293
+surfaces/gui/src/components/CouncilTab.tsx
+  s_3f16b4dbfd2cda::t_206af641aa40c7 1-717
+tests/test_council.py
+  s_3f16b4dbfd2cda::t_a331b868df41c2 1-268
+tests/test_council_config.py
+  s_3f16b4dbfd2cda::t_9ad36327845088 1-477
+tests/test_council_debate.py
+  s_3f16b4dbfd2cda::t_1563ae58d0b94a 1-257
+tests/test_council_usage.py
+  s_3f16b4dbfd2cda::t_fdba442261526e 1-320
+coworker/council/sources.py
+  s_3f16b4dbfd2cda::t_e1073cc36fad1b 1-327
+tests/test_council_server.py
+  s_3f16b4dbfd2cda::t_5e031246f97d68 1-108
+coworker/agent.py
+  s_3f16b4dbfd2cda::t_c0eb21050021a3 17,214-218
+coworker/server/app.py
+  s_3f16b4dbfd2cda::t_9a5ff9ae2dfee2 1215-1242,1639-1644,1647-1650,1665,1667-1673,1679-1681,1684,1688-1711,1713-1727,1732-1733,1769,1779-1780,1787,1790-1799,1802-1811,1816-1825,1831-1834,1836-1851,1856,1858-1859,1861-1868,1870-1872,1874-1882,1890,1892-1898
+surfaces/gui/src/api.ts
+  s_3f16b4dbfd2cda::t_eedd7ea805fc00 1222-1225,1266-1271,1781-1786,1826-1895
+surfaces/gui/src/components/SettingsView.tsx
+  s_3f16b4dbfd2cda::t_eb0a29be302cf9 35,48,59-63,66,126-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "59fc522f2381e30e92c17ff387c133135ae7cbaa",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_dc1ea3e3bce093": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "18dcb55c-2e0b-40d3-93d2-3ee46b8f919f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
