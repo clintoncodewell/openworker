@@ -1,0 +1,47 @@
+coworker/prompt_queue.py
+  s_e54c2276145d1e::t_7db65baf2f09f8 1-319
+surfaces/gui/src/components/QueueShelf.test.tsx
+  s_e54c2276145d1e::t_599dcea93d06e5 1-61
+surfaces/gui/src/components/QueueShelf.tsx
+  s_e54c2276145d1e::t_3232aa66707511 1-236
+tests/test_prompt_queue.py
+  s_e54c2276145d1e::t_0536acbf5fd74e 1-142
+coworker/engine.py
+  s_3f16b4dbfd2cda::t_a45df56872b8db 113,151
+surfaces/gui/src/App.tsx
+  s_3f16b4dbfd2cda::t_ea27ed74413c50 33,52,581-583,586,588,701-716,833-844,846-850,855-864,1552-1562,1574-1575
+surfaces/gui/src/components/Composer.tsx
+  s_3f16b4dbfd2cda::t_fd956502081bc6 28-51,88,299,569-570,572-576,578-580,583-633,635-673
+surfaces/gui/src/components/ManageTabs.tsx
+  s_3f16b4dbfd2cda::t_99cb5f4988591b 111-112,115
+surfaces/gui/src/types.ts
+  s_3f16b4dbfd2cda::t_1155acae204f49 20-24
+tests/test_server.py
+  s_3f16b4dbfd2cda::t_c6dedab63a3a4f 5-6,328-431
+tests/test_ui_refresh_e2e.py
+  s_3f16b4dbfd2cda::t_b21b0b4d2a432c 260-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "4565e4e5067416476f80dbf5497d54b302cf7a86",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "unknown"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_e54c2276145d1e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9352-28e8-7b80-9db4-655824c5d8e2",
+        "model": "unknown"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
