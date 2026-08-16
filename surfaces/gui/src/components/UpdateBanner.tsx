@@ -7,6 +7,7 @@ import {
   isTauri,
   type UpdateInfo,
 } from "../tauri";
+import { autoUpdateEnabled } from "../flags";
 
 // Auto-update prompt (desktop shell only — the browser build never renders this).
 // Deliberately a PROMPT, not a silent background install: swapping the app under a
@@ -53,7 +54,7 @@ export function UpdateBanner() {
   };
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!isTauri() || !autoUpdateEnabled()) return;
     const check = () => checkForUpdate().then((u) => u && offer(u)).catch(() => {});
     const t = setTimeout(check, FIRST_CHECK_MS);
     const i = setInterval(check, RECHECK_MS);

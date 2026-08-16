@@ -14,6 +14,9 @@ let download: () => Promise<void>;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  // Auto-update ships OFF in this fork (see flags.ts). These tests cover the banner's
+  // behaviour when it IS on, so opt in explicitly rather than assert the shipped default.
+  localStorage.setItem("ocw.flag.autoupdate", "1");
   available = { version: "1.2.0", notes: "" };
   download = async () => {};
   invoke = vi.fn(async (cmd: string) => {
@@ -28,12 +31,21 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  localStorage.removeItem("ocw.flag.autoupdate");
   delete (globalThis as any).__TAURI__;
 });
 
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 describe("UpdateBanner", () => {
+  it("never checks while the fork's auto-update flag is off (the shipped default)", async () => {
+    localStorage.removeItem("ocw.flag.autoupdate");
+    render(<UpdateBanner />);
+    await advance(FIRST_CHECK_MS + RECHECK_MS);
+    expect(screen.queryByTestId("update-banner")).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("shows after the boot-settle check finds an update", async () => {
     render(<UpdateBanner />);
     expect(screen.queryByTestId("update-banner")).toBeNull();
