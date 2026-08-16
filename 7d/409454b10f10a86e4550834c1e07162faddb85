@@ -1,0 +1,39 @@
+docs/FORK-OPERATIONS.md
+  s_3f16b4dbfd2cda::t_882517b763c25c 1-331
+scripts/configure-providers.py
+  s_3f16b4dbfd2cda::t_de4fe28a14b6ca 1-205
+scripts/foundry-tailnet-proxy.py
+  s_7dbaaaf555ca8f::t_80ed08641d48a8 1-212
+scripts/sync-upstream.sh
+  s_3f16b4dbfd2cda::t_42bf857a67a7e5 1-103
+surfaces/gui/src/components/UpdateBanner.test.tsx
+  s_3f16b4dbfd2cda::t_c41a5c7ed42e12 17-19,34,41-48
+surfaces/gui/src/components/UpdateBanner.tsx
+  s_3f16b4dbfd2cda::t_9c35ceb99b63f3 10,57
+surfaces/gui/src/flags.ts
+  s_3f16b4dbfd2cda::t_9e90bace5b944c 22-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "7d409454b10f10a86e4550834c1e07162faddb85",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_7dbaaaf555ca8f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ddf321ae-16c8-4afe-86f6-dbe5c1f61fc5",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
