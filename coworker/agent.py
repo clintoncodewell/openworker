@@ -14,6 +14,7 @@ from .automation import scheduling_tools
 from .selfwake import selfwake_tools
 from .subscriptions import subscription_tools
 from .config import load_config
+from .council import make_council_tool
 from .connectors import (
     connector_list,
     load_settings,
@@ -210,6 +211,11 @@ def build_engine(
     # passes its shared router; this fallback covers the TUI / direct build_engine() callers.
     # Resolved here (not at engine construction) because the explorer subagent captures it.
     provider = provider or ProviderRouter(secrets, default_provider="openai")
+    # The council: put a question to every configured model, let them argue, return one
+    # consensus. Every agent gets it — it reads nothing and writes nothing.
+    registry.register(
+        make_council_tool(provider=provider, chair_model=model, secrets=secrets)
+    )
     # Code-family personas can fan broad research out to read-only explorer subagents, keeping
     # their own context for the actual change.
     if agent.family == "code" and ws is not None:

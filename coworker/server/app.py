@@ -1212,6 +1212,34 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.verify_provider, name, (body or {}).get("fields")
         )
 
+    @app.post("/v1/providers/chatgpt/signin")
+    def chatgpt_signin() -> dict[str, Any]:
+        return manager.start_chatgpt_sign_in()
+
+    # -- council (panel prompts, roles, sources, past runs) ---------------------
+    @app.get("/v1/council/config")
+    def council_config_get() -> dict[str, Any]:
+        return manager.council_config()
+
+    @app.post("/v1/council/config")
+    def council_config_set(body: dict) -> dict[str, Any]:
+        return manager.set_council_config(body or {})
+
+    @app.post("/v1/council/sources/test")
+    async def council_source_test(body: dict) -> dict[str, Any]:
+        # Resolving a source hits the disk, the web, or an MCP server — off the loop.
+        # Testing before saving is the difference between "the panel ignored my folder"
+        # and a legible "that glob matched nothing".
+        return await asyncio.to_thread(manager.test_council_source, body or {})
+
+    @app.get("/v1/council/runs")
+    def council_runs() -> list[dict[str, Any]]:
+        return manager.council_runs()
+
+    @app.get("/v1/council/runs/{run_id}")
+    def council_run(run_id: str) -> dict[str, Any]:
+        return manager.council_run(run_id)
+
     # -- settings (model API key) -----------------------------------------------
     @app.get("/v1/settings")
     def settings_get() -> dict[str, Any]:
@@ -1608,12 +1636,18 @@ def create_app(manager: SessionManager) -> FastAPI:
                 },
             )
 
-        async def run_turn(content, *, retry: bool = False) -> None:
-            manager.mark_running(
-                session_id
-            )  # busy → self-wakes steer instead of colliding
+        async def run_turn(
+            content,
+            *,
+            retry: bool = False,
+            queue_claim_id: Optional[str] = None,
+        ) -> None:
             clean = False  # only a turn that reached TURN_END may advance the queue
             try:
+                # The item stays durable until this coroutine has actually begun. A shutdown
+                # between claim and task startup therefore restores it on the next launch.
+                if queue_claim_id:
+                    manager.ack_queued_claim(queue_claim_id)
                 events = engine.retry() if retry else engine.run(content)
                 async for event in events:
                     kind_ = event.type.value
@@ -1628,42 +1662,75 @@ def create_app(manager: SessionManager) -> FastAPI:
                     )
                     if kind_ in _CHECKPOINTS:
                         manager.save(session_id, engine)
-            except Exception:
+            except Exception as exc:
                 clean = False
-                raise
+                if queue_claim_id:
+                    # Only succeeds if startup never acknowledged the claim; otherwise the turn
+                    # had begun and normal error/pause semantics apply.
+                    manager.release_queued_claim(queue_claim_id)
+                await manager.broadcast_session(
+                    session_id, {"type": "error", "data": {"error": str(exc)}}
+                )
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)
                 # Advance only after a clean finish. After an error or a Stop the next item may
                 # depend on work that never happened, so pause and let the user decide.
-                nxt = None
-                if clean and not manager.queue_paused(session_id):
-                    nxt = manager.pop_queued(session_id)  # None while a gate is still closed
-                    if nxt is not None:
-                        # Claim it synchronously: the awaits below yield to the loop, and the
-                        # 30s scheduler tick would otherwise pop a second item and run it
-                        # concurrently on this same session.
-                        manager.mark_running(session_id)
+                claim = None
+                if clean:
+                    claim = manager.claim_next_queued(session_id)
                 elif not clean and manager.queued_prompts(session_id):
                     manager.pause_queue(session_id)
+                await _broadcast_queue()
                 await manager.broadcast_session(
                     session_id, {"type": "turn_done", "data": {}}
                 )
-                await _broadcast_queue()
-                if nxt is not None:
-                    asyncio.create_task(
-                        run_turn(
-                            build_user_content(
-                                nxt.get("text", ""), nxt.get("attachments") or []
-                            )
-                        )
+                if claim is not None:
+                    item = claim["item"]
+                    start_turn(
+                        build_user_content(
+                            item.get("text", ""), item.get("attachments") or []
+                        ),
+                        claim=claim,
                     )
+
+        def start_turn(
+            content,
+            *,
+            retry: bool = False,
+            claim: Optional[dict[str, Any]] = None,
+        ) -> bool:
+            """Claim session ownership before scheduling; roll a queue claim back on failure."""
+            if claim is None and not manager.try_mark_running(session_id):
+                return False
+            try:
+                task = asyncio.create_task(
+                    run_turn(
+                        content,
+                        retry=retry,
+                        queue_claim_id=claim["claim_id"] if claim else None,
+                    )
+                )
+                if claim:
+                    def restore_unstarted(done: asyncio.Task) -> None:
+                        if done.cancelled() and manager.release_queued_claim(
+                            claim["claim_id"]
+                        ):
+                            manager.release_running_claim(session_id)
+
+                    task.add_done_callback(restore_unstarted)
+            except BaseException:
+                if claim:
+                    manager.release_queued_claim(claim["claim_id"])
+                manager.release_running_claim(session_id)
+                raise
+            return True
 
         # This socket is now a live view of the session; background turns (channel delivery,
         # self-wake, durable resume) broadcast here too, not just locally driven run_turns.
         manager.register_session_client(session_id, ws.send_json)
-        # Replay the queue to a (re)connecting view — after an app restart or a dropped
-        # socket the client has no idea work is still parked for this session.
+        # Always replay an authoritative snapshot, including empty. Otherwise reconnecting after
+        # another surface cleared the queue leaves a stale shelf on screen.
         await _broadcast_queue()
         try:
             while True:
@@ -1699,7 +1766,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     # Re-run after a provider error (engine guards on the error-notice
                     # tail, so a stray frame is a no-op that still ends with turn_done).
                     if not manager.is_running(session_id):
-                        asyncio.create_task(run_turn(None, retry=True))
+                        start_turn(None, retry=True)
                 elif kind == "set_mode":
                     try:
                         engine.permissions.mode = Mode(message.get("mode"))
@@ -1709,74 +1776,110 @@ def create_app(manager: SessionManager) -> FastAPI:
                     await _apply_model(message.get("model"))
                 elif kind == "user_message":
                     text = (message.get("text") or "").strip()
-                    attachments = message.get("attachments") or []
+                    raw_attachments = message.get("attachments")
+                    attachments = raw_attachments if isinstance(raw_attachments, list) else []
                     # The composer sends its visible model with every message — the FIRST
                     # one binds the session (race-proof across reconnects; see api.ts
                     # Session.userMessage), later ones may switch it (notice persisted).
                     await _apply_model(message.get("model"))
                     if text or attachments:
                         not_before = message.get("not_before")
-                        if not_before:
+                        if not_before is not None:
                             # Scheduled: queue it as a gate even when idle — that IS the point
                             # ("run this at 9pm"). Everything behind it waits too.
-                            manager.enqueue_prompt(
-                                session_id, text, attachments, float(not_before)
-                            )
-                            await _broadcast_queue()
-                        elif manager.is_running(session_id):
-                            # Busy → park it rather than starting a second concurrent turn on
-                            # the same session (that interleaves two runs into one history).
-                            # It auto-runs on turn_done; the user can promote it to a steer.
-                            manager.enqueue_prompt(session_id, text, attachments)
-                            await _broadcast_queue()
+                            try:
+                                manager.enqueue_prompt(
+                                    session_id, text, attachments, float(not_before)
+                                )
+                            except (OSError, TypeError, ValueError):
+                                await ws.send_json(
+                                    {"type": "error", "data": {"error": "Invalid schedule time."}}
+                                )
+                            else:
+                                await _broadcast_queue()
                         else:
                             content = build_user_content(text, attachments)
-                            asyncio.create_task(run_turn(content))
+                            # The ownership claim is the decision boundary. If another surface or
+                            # scheduler won it first, this prompt is durably queued instead.
+                            if manager.queued_prompts(session_id) or not start_turn(content):
+                                try:
+                                    manager.enqueue_prompt(session_id, text, attachments)
+                                except (OSError, ValueError) as exc:
+                                    await ws.send_json(
+                                        {"type": "error", "data": {"error": str(exc)}}
+                                    )
+                                await _broadcast_queue()
                 elif kind == "steer":
                     # Inject straight into the RUNNING turn — the engine picks it up at its
                     # next step (iteration boundary), so it lands in seconds, not instantly.
                     steer_text = (message.get("text") or "").strip()
-                    if steer_text and manager.is_running(session_id):
-                        engine.queue_steering(steer_text)
+                    raw_steer_attachments = message.get("attachments")
+                    steer_attachments = (
+                        raw_steer_attachments
+                        if isinstance(raw_steer_attachments, list)
+                        else []
+                    )
+                    if (steer_text or steer_attachments) and manager.is_running(session_id):
+                        engine.queue_steering(
+                            build_user_content(steer_text, steer_attachments)
+                        )
                         await manager.broadcast_session(
                             session_id,
                             {"type": "steer_queued", "data": {"text": steer_text}},
                         )
                 elif kind == "queue_promote":
-                    item = manager.remove_queued(session_id, str(message.get("id", "")))
-                    if item is not None:
+                    item_id = str(message.get("id", ""))
+                    claim = manager.claim_queued(session_id, item_id)
+                    if claim is not None:
+                        item = claim["item"]
                         item_text = item.get("text", "")
-                        if manager.is_running(session_id) and item_text:
-                            engine.queue_steering(item_text)
+                        item_content = build_user_content(
+                            item_text, item.get("attachments") or []
+                        )
+                        start_turn(item_content, claim=claim)
+                        await _broadcast_queue()
+                    else:
+                        # A live turn owns the session. Remove + inject synchronously (there is no
+                        # await in this transition, so the turn cannot finish between the two).
+                        item = manager.remove_queued(session_id, item_id)
+                        if item is not None:
+                            item_text = item.get("text", "")
+                            engine.queue_steering(
+                                build_user_content(
+                                    item_text, item.get("attachments") or []
+                                )
+                            )
                             await manager.broadcast_session(
                                 session_id,
                                 {"type": "steer_queued", "data": {"text": item_text}},
                             )
-                        else:
-                            # Turn ended between queueing and promoting → just run it now.
-                            asyncio.create_task(
-                                run_turn(
-                                    build_user_content(
-                                        item_text, item.get("attachments") or []
-                                    )
-                                )
-                            )
-                        await _broadcast_queue()
+                            await _broadcast_queue()
                 elif kind == "queue_remove":
-                    if manager.remove_queued(session_id, str(message.get("id", ""))):
-                        await _broadcast_queue()
-                elif kind == "queue_edit":
-                    if manager.edit_queued(
-                        session_id,
-                        str(message.get("id", "")),
-                        (message.get("text") or "").strip(),
-                    ):
-                        await _broadcast_queue()
-                elif kind == "queue_reorder":
-                    manager.reorder_queue(
-                        session_id, [str(i) for i in (message.get("order") or [])]
-                    )
+                    manager.remove_queued(session_id, str(message.get("id", "")))
                     await _broadcast_queue()
+                elif kind == "queue_edit":
+                    try:
+                        changed = manager.edit_queued(
+                            session_id,
+                            str(message.get("id", "")),
+                            (message.get("text") or "").strip(),
+                        )
+                    except ValueError as exc:
+                        await ws.send_json({"type": "error", "data": {"error": str(exc)}})
+                        await _broadcast_queue()
+                    else:
+                        if changed:
+                            await _broadcast_queue()
+                elif kind == "queue_reorder":
+                    try:
+                        manager.reorder_queue(
+                            session_id, [str(i) for i in (message.get("order") or [])]
+                        )
+                    except ValueError as exc:
+                        await ws.send_json({"type": "error", "data": {"error": str(exc)}})
+                        await _broadcast_queue()
+                    else:
+                        await _broadcast_queue()
                 elif kind == "queue_pause":
                     manager.pause_queue(session_id)
                     await _broadcast_queue()
@@ -1784,21 +1887,15 @@ def create_app(manager: SessionManager) -> FastAPI:
                     manager.resume_queue(session_id)
                     # Idle with a ready head → start it now instead of waiting up to 30s for
                     # the scheduler tick to notice.
-                    item = (
-                        None
-                        if manager.is_running(session_id)
-                        else manager.pop_queued(session_id)
-                    )
-                    if item is not None:
-                        manager.mark_running(session_id)  # claim before awaiting (tick race)
+                    claim = manager.claim_next_queued(session_id)
                     await _broadcast_queue()
-                    if item is not None:
-                        asyncio.create_task(
-                            run_turn(
-                                build_user_content(
-                                    item.get("text", ""), item.get("attachments") or []
-                                )
-                            )
+                    if claim is not None:
+                        item = claim["item"]
+                        start_turn(
+                            build_user_content(
+                                item.get("text", ""), item.get("attachments") or []
+                            ),
+                            claim=claim,
                         )
         except WebSocketDisconnect:
             pass

@@ -1219,6 +1219,10 @@ export interface ProviderInfo {
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
   last_used_at?: number | null; // epoch secs the provider last served a completion
+  auth?: "oauth" | null;
+  authorizing?: boolean;
+  auth_error?: string | null;
+  account?: string | null;
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
@@ -1256,6 +1260,12 @@ export async function verifyProvider(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, fields }),
   });
+  return res.json();
+}
+
+/** Start ChatGPT's local browser OAuth flow; provider polling reports completion. */
+export async function signInChatGPT(): Promise<{ ok: boolean; started?: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/providers/chatgpt/signin`, { method: "POST" });
   return res.json();
 }
 
@@ -1768,8 +1778,12 @@ export class Session {
   // Enter queues (userMessage while busy); ⌘Enter steers. A steer is injected into the
   // RUNNING turn and lands at the agent's next step — never instantly, so the UI says
   // "waiting for next step" until the agent actually picks it up.
-  steer(text: string) {
-    this.send({ type: "steer", text });
+  steer(text: string, attachments?: unknown[]) {
+    this.send({
+      type: "steer",
+      text,
+      ...(attachments?.length ? { attachments } : {}),
+    });
   }
 
   /** Pull a queued item out and inject it into the running turn (or run it if the turn
@@ -1809,3 +1823,73 @@ export class Session {
   }
 }
 
+// -- council (panel prompts, roles, scoped sources, past runs) -----------------
+export type CouncilSource = {
+  kind: string;
+  target: string;
+  label: string;
+  options: Record<string, any>;
+  enabled: boolean;
+};
+
+export type CouncilConfig = {
+  preset: string;
+  rounds: number;
+  research: boolean;
+  panel: string[];
+  chair_model: string;
+  roles: { name: string; brief: string }[];
+  sources: CouncilSource[];
+  prompts: Record<string, Record<string, string>>;
+  skip_debate_on_agreement: boolean;
+  max_tokens_per_run: number;
+  // Server-derived, read-only: the shipped text behind "reset", the valid source kinds,
+  // and the panel that would actually run right now.
+  defaults: Record<string, Record<string, string>>;
+  default_roles: { name: string; brief: string }[];
+  source_kinds: string[];
+  resolved_panel: { model: string; role: string }[];
+  resolved_chair: string;
+};
+
+export async function getCouncilConfig(): Promise<CouncilConfig> {
+  const res = await fetch(`${httpBase()}/v1/council/config`);
+  return res.json();
+}
+
+/** Partial save: only the keys you pass are changed. */
+export async function setCouncilConfig(
+  patch: Partial<CouncilConfig>,
+): Promise<CouncilConfig & { ok: boolean }> {
+  const res = await fetch(`${httpBase()}/v1/council/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+export async function testCouncilSource(
+  source: Partial<CouncilSource>,
+): Promise<{ ok: boolean; error?: string; chars?: number; truncated?: boolean; preview?: string }> {
+  const res = await fetch(`${httpBase()}/v1/council/sources/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(source),
+  });
+  return res.json();
+}
+
+export async function getCouncilRuns(): Promise<
+  { id: string; updated_at: number; files: string[] }[]
+> {
+  const res = await fetch(`${httpBase()}/v1/council/runs`);
+  return res.json();
+}
+
+export async function getCouncilRun(
+  id: string,
+): Promise<{ ok: boolean; id?: string; files?: Record<string, string>; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/council/runs/${encodeURIComponent(id)}`);
+  return res.json();
+}
