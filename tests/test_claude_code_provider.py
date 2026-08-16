@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 import pytest
 
+from coworker.providers import claude_code_provider as ccp
 from coworker.providers.claude_code_provider import ClaudeCodeProvider, _split
 from coworker.providers.registry import build_provider_client, get_descriptor, provider_configured
 from coworker.secrets import SecretStore
@@ -129,8 +131,80 @@ def test_capabilities_declare_no_tools():
 
 def test_a_missing_cli_is_a_clear_error(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", ())  # not the host's own install
     with pytest.raises(RuntimeError, match="not on PATH"):
         ClaudeCodeProvider().complete(model="claude-opus-5", messages=[{"role": "user", "content": "hi"}])
+
+
+# -- finding the CLI when PATH is minimal ----------------------------------------------
+
+
+def test_a_cli_outside_PATH_is_still_found(monkeypatch, tmp_path):
+    """macOS gives a GUI app PATH=/usr/bin:/bin:/usr/sbin:/sbin — the login shell's PATH is
+    never applied — so the sidecar could not see ~/.local/bin/claude. The council then
+    convened without its Claude member while Settings showed it connected."""
+    installed = tmp_path / "claude"
+    installed.write_text("#!/bin/sh\n")
+    installed.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", (str(installed),))
+    assert ccp.resolve_binary() == str(installed)
+
+
+def test_PATH_wins_over_the_fallback_locations(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/claude")
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", ("/never/looked/at",))
+    assert ccp.resolve_binary() == "/usr/bin/claude"
+
+
+def test_an_explicit_binary_never_falls_back_to_another_install(monkeypatch, tmp_path):
+    """A user who names a binary gets that binary or an error — silently running a different
+    Claude than the one they configured is worse than failing."""
+    other = tmp_path / "claude"
+    other.write_text("#!/bin/sh\n")
+    other.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", (str(other),))
+    assert ccp.resolve_binary("/opt/mine/claude") is None
+
+
+def test_a_directory_named_claude_is_not_mistaken_for_the_cli(monkeypatch, tmp_path):
+    """os.access(X_OK) is true for any searchable directory, so the file type has to be
+    checked explicitly — otherwise the resolver hands back a path that cannot be run."""
+    (tmp_path / "claude").mkdir()
+    monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", (str(tmp_path / "claude"),))
+    assert ccp.resolve_binary() is None
+
+
+def test_a_world_writable_candidate_is_refused(monkeypatch, tmp_path):
+    """These locations are not on the app's PATH, so nothing vetted them. A binary any
+    other account can rewrite must not become something this app runs."""
+    installed = tmp_path / "claude"
+    installed.write_text("#!/bin/sh\n")
+    installed.chmod(0o777)
+    monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", (str(installed),))
+    assert ccp.resolve_binary() is None
+    installed.chmod(0o755)
+    assert ccp.resolve_binary() == str(installed)
+
+
+def test_a_relative_hit_is_made_absolute(monkeypatch):
+    """The CLI runs with cwd set to a scratch directory, so a relative path would resolve
+    somewhere other than where it was found."""
+    monkeypatch.setattr("shutil.which", lambda b: "./claude")
+    assert os.path.isabs(ccp.resolve_binary())
+
+
+def test_the_resolved_path_is_what_gets_executed(run, monkeypatch, tmp_path):
+    installed = tmp_path / "claude"
+    installed.write_text("#!/bin/sh\n")
+    installed.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", (str(installed),))
+    ClaudeCodeProvider().complete(model="claude-opus-5", messages=[{"role": "user", "content": "hi"}])
+    assert run[0]["argv"][0] == str(installed)
 
 
 def test_a_cli_level_error_payload_is_raised(monkeypatch):
@@ -219,9 +293,46 @@ def test_keyless_is_not_the_same_as_available(tmp_path, monkeypatch):
     the CLI is actually installed, so claiming otherwise puts a dead member on the panel."""
     store = SecretStore(tmp_path / "secrets.json")
     monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", ())
     assert provider_configured("claude-code", store) is False
     monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/claude")
     assert provider_configured("claude-code", store) is True
+
+
+def test_a_custom_binary_is_what_availability_tests(tmp_path, monkeypatch):
+    """Availability once tested the DEFAULT binary whatever the profile said. Both directions
+    reproduced the split this check exists to close: a working custom binary read as
+    disconnected, and — worse — a missing one read as connected while a stock `claude`
+    existed, so the panel included a member that raised on every call."""
+    from coworker.providers.registry import get_descriptor, provider_available
+
+    d = get_descriptor("claude-code")
+    installed = tmp_path / "mine"
+    installed.write_text("#!/bin/sh\n")
+    installed.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda b: str(installed) if b == str(installed) else None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", ())
+
+    assert provider_available(d, {"binary": str(installed)}) is True
+    assert provider_available(d, {"binary": "/opt/gone/claude"}) is False
+    # The stock CLI being present must not vouch for a custom binary that is missing.
+    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/claude" if b == "claude" else None)
+    assert provider_available(d, {"binary": "/opt/gone/claude"}) is False
+    assert provider_available(d, {}) is True
+
+
+def test_a_broken_availability_check_reads_as_unavailable(tmp_path):
+    """This runs on every Settings render. One descriptor raising must not take out the
+    whole provider list with a 500."""
+    from coworker.providers.registry import ProviderDescriptor, provider_available
+
+    def boom(_profile):
+        raise OSError("stale network mount")
+
+    d = ProviderDescriptor(
+        name="x", title="X", needs_key=False, fields=[], build=lambda p, s: None, available=boom
+    )
+    assert provider_available(d, {}) is False
 
 
 def test_the_registry_builds_it(tmp_path):

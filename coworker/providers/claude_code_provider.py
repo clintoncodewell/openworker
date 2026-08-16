@@ -27,12 +27,68 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 from typing import Any, Optional
 
 from .base import AssistantTurn, ModelCapabilities, ProviderClient
 
 DEFAULT_TIMEOUT_S = 300.0
+
+
+# macOS starts a GUI app with a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin) — the login
+# shell's PATH is never applied. So the sidecar inside OpenWorker.app cannot see a CLI in
+# `~/.local/bin`, which is exactly where Claude Code installs itself. Measured on the Mac
+# 2026-08-17: `which claude` resolves in a terminal and returns nothing in the app, so the
+# council silently convened WITHOUT its Claude member while Settings showed it connected.
+# Checking the known install locations is what keeps the desktop panel identical to the one
+# a terminal-launched build resolves.
+_KNOWN_PATHS = (
+    "~/.local/bin/claude",
+    "~/.claude/local/claude",
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+)
+
+
+def _safe_executable(path: str) -> bool:
+    """A real, executable file that only its owner can rewrite.
+
+    PATH entries are chosen by the OS; these locations are not, so a hit here was never
+    something the system decided to trust. Two things follow. A directory passes
+    `os.access(X_OK)` — searchable, not runnable — so the file type is checked explicitly.
+    And a candidate any other account can write to is refused: without that, dropping a file
+    in a home directory would be enough to have this app run it.
+    """
+    try:
+        st = os.stat(path)  # follows symlinks on purpose: the target is what executes
+    except OSError:
+        return False
+    if not stat.S_ISREG(st.st_mode) or not os.access(path, os.X_OK):
+        return False
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:
+        return True  # Windows has no POSIX ownership; PATH is the only source there anyway
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return False
+    return st.st_uid in (0, getuid())
+
+
+def resolve_binary(binary: str = "claude") -> Optional[str]:
+    """The CLI's absolute path, or None. PATH first, then the known install locations."""
+    found = shutil.which(binary)
+    if found:
+        # A relative hit would otherwise be resolved against the scratch cwd we run in,
+        # which is not the directory the caller measured it from.
+        return os.path.abspath(found)
+    # An explicit path that does not exist is a mistake to report, not one to guess around.
+    if binary != "claude":
+        return None
+    for candidate in _KNOWN_PATHS:
+        path = os.path.expanduser(candidate)
+        if _safe_executable(path):
+            return path
+    return None
 
 
 def _scratch_dir():
@@ -127,7 +183,8 @@ class ClaudeCodeProvider(ProviderClient):
                 "not tool_use blocks. Use it for council members and analysis, and pick an "
                 "API-keyed provider as the session model."
             )
-        if shutil.which(self._binary) is None:
+        binary = resolve_binary(self._binary)
+        if binary is None:
             raise RuntimeError(
                 f"`{self._binary}` is not on PATH. Install Claude Code and sign in with "
                 "`claude` once; this provider reuses that login."
@@ -135,7 +192,7 @@ class ClaudeCodeProvider(ProviderClient):
 
         system, prompt = _split(messages)
         argv = [
-            self._binary,
+            binary,
             "-p",
             prompt,
             "--model",

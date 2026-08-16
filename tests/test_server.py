@@ -805,6 +805,29 @@ def test_pick_native_folder_paths(tmp_path, monkeypatch):
     assert out["ok"] is False and "picker" in out["error"]
 
 
+def test_settings_and_the_council_agree_on_a_keyless_provider(tmp_path, monkeypatch):
+    """This listing once had its own copy of the "configured" rule that returned True for
+    every keyless provider. On the Mac it therefore showed Claude Code as connected while
+    the council — which asks the shared definition — silently convened without it. The two
+    must answer the same question, in both directions.
+    """
+    from coworker.providers import claude_code_provider as ccp
+    from coworker.providers.registry import provider_configured
+
+    client = _client(tmp_path, [])
+    monkeypatch.setattr("shutil.which", lambda b: None)
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", ())
+    prov = {p["name"]: p for p in client.get("/v1/providers").json()}
+    assert prov["claude-code"]["configured"] is False
+
+    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/claude")
+    prov = {p["name"]: p for p in client.get("/v1/providers").json()}
+    assert prov["claude-code"]["configured"] is True
+    # Ollama stays keyless-and-configured — the rule tightened only where a check exists.
+    assert prov["ollama"]["configured"] is True
+    assert provider_configured("ollama", None) is True
+
+
 def test_provider_set_and_remove_roundtrip(tmp_path):
     """Settings ▸ Models "Remove key": DELETE /v1/providers/{name} forgets the stored
     profile so the provider reads unconfigured again; unknown names are a clean error.

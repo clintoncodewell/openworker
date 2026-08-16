@@ -1332,6 +1332,8 @@ class SessionManager:
         """
         import os
 
+        from ..providers.registry import provider_available
+
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
             profile = self.secrets.get(f"provider:{d.name}") or {}
@@ -1344,7 +1346,12 @@ class SessionManager:
                     d.env_key and os.environ.get(d.env_key)
                 )
             else:
-                configured = True  # keyless (Ollama) — usable out of the box
+                # Keyless is not the same as usable. A provider that shells out to a CLI is
+                # configured only if that CLI is actually installed, so ask the descriptor —
+                # the same question `provider_configured` asks when the council resolves its
+                # panel. While this branch had its own `True`, Settings advertised Claude Code
+                # as connected on a machine where the panel then silently dropped it.
+                configured = provider_available(d, profile)
             values = {
                 f.key: profile.get(f.key)
                 for f in d.fields

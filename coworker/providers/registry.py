@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .anthropic_provider import AnthropicProvider
-from .claude_code_provider import ClaudeCodeProvider
+from .claude_code_provider import ClaudeCodeProvider, resolve_binary
 from .base import ProviderClient
 from .chatgpt_provider import ChatGPTProvider
 from .gemini_provider import GeminiProvider
@@ -74,8 +74,9 @@ class ProviderDescriptor:
     # Browser account sign-in instead of form fields. Empty means the normal key/keyless flow.
     auth: str = ""
     # Liveness test for a KEYLESS provider, where "configured" is otherwise vacuously true.
+    # Takes the provider's stored profile, so a configured custom binary is what gets tested.
     # Must be cheap enough to run on every Settings render — a `which`, not a network call.
-    available: Optional[Callable[[], bool]] = field(default=None, repr=False)
+    available: Optional[Callable[[dict[str, Any]], bool]] = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +102,12 @@ def _normalize_ollama_url(url: Optional[str]) -> str:
     if not base.endswith("/v1"):
         base = base + "/v1"
     return base
+
+
+def _claude_binary(profile: Optional[dict[str, Any]]) -> str:
+    """The Claude Code binary this profile asks for — used to BUILD it and to test whether
+    it exists, so those two can never disagree about which binary they mean."""
+    return ((profile or {}).get("binary") or "claude").strip() or "claude"
 
 
 def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -287,10 +294,8 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         title="Claude (via Claude Code subscription)",
         needs_key=False,
         fields=[],
-        build=lambda profile, secrets: ClaudeCodeProvider(
-            binary=((profile or {}).get("binary") or "claude").strip() or "claude"
-        ),
-        available=lambda: __import__("shutil").which("claude") is not None,
+        build=lambda profile, secrets: ClaudeCodeProvider(binary=_claude_binary(profile)),
+        available=lambda profile: resolve_binary(_claude_binary(profile)) is not None,
         recommended_model="claude-opus-5",
         blurb="Runs Claude on your Claude Code subscription — no API key. Text only, so it "
         "works as a council member but cannot be the session model.",
@@ -493,6 +498,24 @@ def get_descriptor(name: str) -> Optional[ProviderDescriptor]:
     return _BY_NAME.get(name)
 
 
+def provider_available(d: ProviderDescriptor, profile: Optional[dict[str, Any]]) -> bool:
+    """Run a keyless provider's liveness check against ITS OWN stored profile.
+
+    The profile matters: a user who points `claude-code` at a custom binary must be judged
+    on that binary. Checking the default instead reproduces, in the custom-binary path, the
+    exact Settings-says-yes / council-says-no split this check exists to close.
+
+    A check that raises reads as unavailable rather than propagating — this runs on every
+    Settings render, and one broken descriptor must not take out the whole provider list.
+    """
+    if d.available is None:
+        return True
+    try:
+        return bool(d.available(profile or {}))
+    except Exception:
+        return False
+
+
 def provider_configured(name: str, secrets: Any) -> bool:
     """Is this provider usable — has it a key (stored or from its env var), or is it
     keyless / signed in?
@@ -512,7 +535,7 @@ def provider_configured(name: str, secrets: Any) -> bool:
     if not d.needs_key:
         # Keyless says nothing about usable. A provider that shells out to a CLI is only
         # configured if that CLI is actually installed, so ask before claiming it works.
-        return d.available() if d.available else True
+        return provider_available(d, profile)
     return bool(profile.get("api_key")) or bool(
         d.env_key and os.environ.get(d.env_key)
     )

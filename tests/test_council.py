@@ -148,10 +148,15 @@ def no_provider_env(monkeypatch):
     extra model on the panel), and the keyless CLI providers, which are configured iff
     their binary is installed — so these tests would pass or fail depending on whether
     Claude Code happens to be on the machine."""
+    from coworker.providers import claude_code_provider as ccp
+
     for d in provider_descriptors():
         if d.env_key:
             monkeypatch.delenv(d.env_key, raising=False)
     monkeypatch.setattr("shutil.which", lambda _binary: None)
+    # PATH is not the only place a CLI is looked for any more — a GUI app on macOS gets a
+    # minimal PATH, so the resolver also checks the known install locations.
+    monkeypatch.setattr(ccp, "_KNOWN_PATHS", ())
 
 
 def test_default_panel_takes_one_model_per_configured_provider(tmp_path, no_provider_env):
