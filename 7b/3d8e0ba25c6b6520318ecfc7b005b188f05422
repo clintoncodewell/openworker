@@ -1,0 +1,57 @@
+coworker/providers/claude_code_provider.py
+  s_3f16b4dbfd2cda::t_c4ff544bc2fcc3 1-221
+tests/test_claude_code_provider.py
+  s_3f16b4dbfd2cda::t_36e7cf7aa83937 1-245
+coworker/providers/chatgpt_auth.py
+  s_e54c2276145d1e::t_293ae676ce8e6f 1-248
+coworker/providers/chatgpt_provider.py
+  s_e54c2276145d1e::t_be3d7d69c62b42 1-278
+tests/test_chatgpt_provider.py
+  s_e54c2276145d1e::t_0ca89bf18ad47f 1-174
+coworker/providers/__init__.py
+  s_3f16b4dbfd2cda::t_2fd2bd8ee2968f 10-11,20,36-37,43
+coworker/providers/matrix.py
+  s_3f16b4dbfd2cda::t_bd0255dd6a0f5c 9-13,38-45,63-92,95-98,119-131,133,135,143-144,149
+coworker/providers/registry.py
+  s_3f16b4dbfd2cda::t_f1249459b7d5e5 22,24,74-78,88,114-117,148-160,183-190,208-209,211-221,235,245-246,275-297,326,331-337,346,370,373-397,432,450,496-520
+coworker/server/manager.py
+  s_3f16b4dbfd2cda::t_f0192f90024b70 72,145,151-155,797-798,1338-1342,1366-1368,1431-1432,1437,1501-1611,1619-1622,1637-1645,1665-1672,2612-2618,2626-2629,2648,2651,2655-2659,2661-2671,2673-2686,2689,2694,2697,2702,2707,2719-2721,2723,2725-2731,2741-2748,2757,2764-2766,2768-2770,2772-2775,2784,2790-2793,2805-2813,2815-2825
+surfaces/gui/e2e/fixtures.ts
+  s_3f16b4dbfd2cda::t_0dd777740bee3e 330,1235-1241
+surfaces/gui/e2e/provider-keys.spec.ts
+  s_3f16b4dbfd2cda::t_af0a9a43b0460b 74-90
+surfaces/gui/src/providers/ProviderSetup.tsx
+  s_3f16b4dbfd2cda::t_7144b5bb186abb 6,86,127,217-248,250-262,297,306,382-402,478
+surfaces/gui/src/providers/logos.ts
+  s_3f16b4dbfd2cda::t_f25c3cb3fc4f18 25,42
+tests/test_gemini_provider.py
+  s_3f16b4dbfd2cda::t_e8d4c1b13befc7 457-460
+tests/test_provider_router.py
+  s_3f16b4dbfd2cda::t_1000562264ebfc 335-338,445-452
+tests/test_providers.py
+  s_3f16b4dbfd2cda::t_80f9b27026a728 396-401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "7b3d8e0ba25c6b6520318ecfc7b005b188f05422",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_e54c2276145d1e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9352-28e8-7b80-9db4-655824c5d8e2",
+        "model": "unknown"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
