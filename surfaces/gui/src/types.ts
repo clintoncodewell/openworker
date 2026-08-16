@@ -17,7 +17,11 @@ export type EventType =
   | "error"
   | "interrupted"
   | "model_changed"
-  | "turn_done";
+  | "turn_done"
+  // Prompt queue: the server pushes the authoritative list on every change and on connect;
+  // `steer_queued` confirms a steer was accepted into the running turn (not yet applied).
+  | "queue_updated"
+  | "steer_queued";
 
 export interface WsEvent {
   type: EventType;

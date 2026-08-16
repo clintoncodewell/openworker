@@ -108,10 +108,11 @@ export function ModelsTab() {
               className="text-[12.5px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
               data-testid="set-remove-key"
               onClick={() => {
-                if (window.confirm(`Remove the ${info?.title} key from this computer?`)) ps.removeKey();
+                const noun = info?.auth === "oauth" ? "ChatGPT sign-in" : `${info?.title} key`;
+                if (window.confirm(`Remove the ${noun} from this computer?`)) ps.removeKey();
               }}
             >
-              Remove key…
+              {info?.auth === "oauth" ? "Sign out…" : "Remove key…"}
             </button>
           ) : null
         }

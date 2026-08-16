@@ -30,7 +30,7 @@ import {
 import type { ApprovalDecision, Attachment, Item, SessionInfo, TodoItem, WsEvent } from "./types";
 import { isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
-import { itemsFromMessages } from "./itemsFromMessages";
+import { itemsFromMessages, userItemFromContent } from "./itemsFromMessages";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
 import { isTauri, platformOS, startWindowDrag } from "./tauri";
@@ -49,6 +49,7 @@ import { RightRail } from "./components/RightRail";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { SettingsView } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
+import { QueueShelf, type QueueItem } from "./components/QueueShelf";
 import { AuditView } from "./components/AuditView";
 import { InboxView } from "./components/InboxView";
 import { ApprovalCard } from "./components/ApprovalCard";
@@ -577,12 +578,14 @@ export function App() {
                 ? p
                 : [...p, { kind: "connector", source: src }];
             });
-          } else if (typeof d.input === "string" && d.input) {
+          } else {
+            const incoming = userItemFromContent(d.input);
+            if (!incoming.text && !incoming.attachments?.length) break;
             setItems((p) => {
               const last = p[p.length - 1];
-              return last && last.kind === "user" && last.text === d.input
+              return last && last.kind === "user" && last.text === incoming.text
                 ? p
-                : [...p, { kind: "user", text: d.input as string, ts: Date.now() / 1000 }];
+                : [...p, { ...incoming, ts: Date.now() / 1000 }];
             });
           }
           break;
@@ -693,6 +696,22 @@ export function App() {
           setItems((p) => [
             ...p,
             { kind: "notice", tone: "warn", text: "Error: " + (d.error || "unknown"), retriable: true },
+          ]);
+          break;
+        case "queue_updated":
+          // Server-authoritative: covers queueing, promotion, reorder, auto-advance, and the
+          // replay a (re)connecting client gets so restored work is never invisible.
+          setQueue((d.items as QueueItem[]) || []);
+          setQueuePaused(!!d.paused);
+          break;
+        case "steer_queued":
+          setItems((p) => [
+            ...p,
+            {
+              kind: "notice",
+              tone: "info",
+              text: "Steer sent — the agent picks it up at its next step.",
+            },
           ]);
           break;
         case "turn_done":
@@ -811,12 +830,38 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
+  // Prompt queue. The SERVER owns it (it decides run-now vs queue), and pushes the
+  // authoritative list on every change and on (re)connect — the client never guesses.
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queuePaused, setQueuePaused] = useState(false);
+
+  // Never show session A's queue while session B's socket is connecting. The server's first
+  // queue_updated frame (including an empty snapshot) then becomes authoritative.
+  useEffect(() => {
+    setQueue([]);
+    setQueuePaused(false);
+  }, [sessionId]);
+
   const send = (text: string, attachments?: Attachment[]) => {
-    setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+    // While a turn is running the server PARKS this in the queue, so it belongs in the shelf,
+    // not the transcript. Only render it optimistically when it will actually run now.
+    if (!running && queue.length === 0) {
+      setItems((p) => [...p, { kind: "user", text, attachments, ts: Date.now() / 1000 }]);
+    }
     // The visible model rides along with the message (single source of truth per turn).
     sessionRef.current?.userMessage(text, attachments, model);
     followLatest(); // sending always re-engages stream-following, wherever the user had scrolled
   };
+
+  // ⌘/Ctrl+Enter while running: inject into the live turn. It lands at the agent's next step,
+  // so the notice says exactly that rather than implying it took effect instantly.
+  const steer = (text: string, attachments?: Attachment[]) => {
+    sessionRef.current?.steer(text, attachments);
+    followLatest();
+  };
+
+  const schedulePrompt = (text: string, attachments: Attachment[], at: number) =>
+    sessionRef.current?.userMessage(text, attachments, model, at);
   // Resolving a LIVE prompt also resolves its parked Inbox mirror server-side, but the polled
   // `sessionInbox` copy stays "pending" for up to a poll cycle — long enough for the docked
   // answer-in-context card to flash the SAME request again right after the user answered it
@@ -1211,7 +1256,6 @@ export function App() {
         <button
           className="nav-reveal-btn"
           onClick={toggleNav}
-          onMouseEnter={() => setNavPeek(true)}
           title="Show sidebar (⌘B)"
           aria-label="Show sidebar"
         >
@@ -1505,6 +1549,17 @@ export function App() {
               </div>
             )}
 
+            <QueueShelf
+              items={queue}
+              paused={queuePaused}
+              running={running}
+              onSteerNow={(id) => sessionRef.current?.queuePromote(id)}
+              onRemove={(id) => sessionRef.current?.queueRemove(id)}
+              onEdit={(id, text) => sessionRef.current?.queueEdit(id, text)}
+              onReorder={(order) => sessionRef.current?.queueReorder(order)}
+              onResume={() => sessionRef.current?.queueResume()}
+            />
+
             <Composer
               mode={mode}
               model={model}
@@ -1516,6 +1571,8 @@ export function App() {
               onConnectModel={openModelSetup}
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
+              onSteer={steer}
+              onSchedule={schedulePrompt}
               onInterrupt={interrupt}
               onModeChange={changeMode}
               onModelChange={changeModel}

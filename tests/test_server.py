@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -321,6 +323,110 @@ def test_ws_simple_turn(tmp_path):
         types = _drain(ws)
         assert "assistant_message" in types
         assert "turn_end" in types
+
+
+def test_ws_rapid_messages_run_once_in_order_without_collision(tmp_path):
+    class BlockingFirstProvider(ProviderClient):
+        def __init__(self):
+            self.entered = threading.Event()
+            self.release = threading.Event()
+            self.calls = 0
+
+        def complete(self, *, model, messages, tools=None, **settings):
+            self.calls += 1
+            if self.calls == 1:
+                self.entered.set()
+                assert self.release.wait(5)
+            return _text(f"answer {self.calls}")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    provider = BlockingFirstProvider()
+    manager = SessionManager(workspace=tmp_path, provider=provider)
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/rapid") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        assert ws.receive_json() == {
+            "type": "queue_updated",
+            "data": {"items": [], "paused": False},
+        }
+        ws.send_json({"type": "user_message", "text": "first"})
+        assert provider.entered.wait(5)
+        ws.send_json({"type": "user_message", "text": "second"})
+
+        # The second message is durably parked while the first owns the session.
+        while True:
+            event = ws.receive_json()
+            if event["type"] == "queue_updated" and event["data"]["items"]:
+                assert event["data"]["items"][0]["text"] == "second"
+                break
+        provider.release.set()
+        turn_done = 0
+        while turn_done < 2:
+            turn_done += ws.receive_json()["type"] == "turn_done"
+
+    engine = manager.get_engine("rapid")
+    users = [m["content"] for m in engine.messages if m.get("role") == "user"]
+    assert users == ["first", "second"]
+    # A third provider call may be the manager's asynchronous auto-title, but only two
+    # user turns may enter the session history.
+    assert provider.calls >= 2
+    assert manager.queued_prompts("rapid") == []
+
+
+def test_ws_failed_turn_pauses_and_preserves_followup(tmp_path):
+    class BlockingFailure(ProviderClient):
+        def __init__(self):
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, *, model, messages, tools=None, **settings):
+            self.entered.set()
+            assert self.release.wait(5)
+            raise RuntimeError("provider failed")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    provider = BlockingFailure()
+    manager = SessionManager(workspace=tmp_path, provider=provider)
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/failure") as ws:
+        ws.receive_json()  # ready
+        ws.receive_json()  # authoritative empty queue
+        ws.send_json({"type": "user_message", "text": "first"})
+        assert provider.entered.wait(5)
+        ws.send_json({"type": "user_message", "text": "must survive"})
+        while not manager.queued_prompts("failure"):
+            ws.receive_json()
+        provider.release.set()
+        snapshots = []
+        while True:
+            event = ws.receive_json()
+            if event["type"] == "queue_updated":
+                snapshots.append(event["data"])
+            if event["type"] == "turn_done":
+                break
+
+    assert manager.queue_paused("failure") is True
+    assert [item["text"] for item in manager.queued_prompts("failure")] == [
+        "must survive"
+    ]
+    assert snapshots[-1]["paused"] is True
+
+
+def test_ws_connect_always_clears_stale_queue_state(tmp_path):
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    item = manager.enqueue_prompt("cleared", "temporary")
+    manager.remove_queued("cleared", item["id"])
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/cleared") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        assert ws.receive_json() == {
+            "type": "queue_updated",
+            "data": {"items": [], "paused": False},
+        }
 
 
 def test_ws_error_persists_notice_and_retry_reruns(tmp_path):

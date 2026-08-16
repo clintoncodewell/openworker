@@ -25,6 +25,30 @@ const PERMISSION_OPTIONS: Option[] = [
   { value: "auto", label: "Full access", description: "Run everything without asking" },
 ];
 
+// Schedule helpers. A few presets plus the NATIVE datetime-local input covers "start this at
+// 9pm" — no date-picker dependency, and no natural-language parsing in v1.
+function fmtClock(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function schedulePresets(): { label: string; at: Date }[] {
+  const now = new Date();
+  const tonight = new Date(now);
+  tonight.setHours(21, 0, 0, 0);
+  if (tonight <= now) tonight.setDate(tonight.getDate() + 1); // already past 9pm → tomorrow
+  const tomorrow9 = new Date(now);
+  tomorrow9.setDate(now.getDate() + 1);
+  tomorrow9.setHours(9, 0, 0, 0);
+  return [
+    { label: "Tonight, 9:00 PM", at: tonight },
+    { label: "In 1 hour", at: new Date(now.getTime() + 3600_000) },
+    { label: "Tomorrow, 9:00 AM", at: tomorrow9 },
+  ];
+}
+
 // No hardcoded model fallback: until the server supplies the list (a few seconds after a
 // cold app boot), the picker renders a disabled "Loading models…" chip. A baked-in list
 // goes stale and silently offers ids the backend never confirmed (caught 2026-07-21).
@@ -61,7 +85,7 @@ interface Props {
   onSend: (text: string, attachments?: Attachment[]) => void;
   onInterrupt: () => void;
   // ⌘/Ctrl+Enter while a turn runs: inject into the live turn instead of queueing behind it.
-  onSteer?: (text: string) => void;
+  onSteer?: (text: string, attachments?: Attachment[]) => void;
   // Queue as a "not before" gate. `at` is epoch SECONDS.
   onSchedule?: (text: string, attachments: Attachment[], at: number) => void;
   onModeChange: (mode: string) => void;
@@ -272,7 +296,7 @@ export function Composer(props: Props) {
       return;
     }
     if (opts?.steer && props.running) {
-      props.onSteer?.(t);
+      props.onSteer?.(t, attachments);
     } else if (scheduledFor) {
       props.onSchedule?.(t, attachments, scheduledFor);
       setScheduledFor(null);
@@ -542,29 +566,111 @@ export function Composer(props: Props) {
             </button>
           )}
 
-          {/* send / stop */}
-          {props.running ? (
-            <button className="btn danger" onClick={props.onInterrupt}>
-              ⏹ Stop
-            </button>
-          ) : (
+          {/* schedule — a "not before" gate, so it also holds everything queued behind it */}
+          <div className="relative">
             <button
-              className={
-                "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
-                (hasContent && props.connected && !dictation?.recording && !dictationBusy
-                  ? "bg-accent text-white hover:brightness-105"
-                  : "bg-paper border border-line text-faint")
-              }
-              onClick={submit}
-              disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
-              title={needsModel ? "Connect a model to send" : undefined}
-              aria-label="Send"
+              className={iconBtn + (scheduleOpen || scheduledFor ? " bg-paper text-ink" : "")}
+              title={scheduledFor ? `Scheduled for ${fmtClock(scheduledFor)}` : "Send later"}
+              aria-label="Schedule this prompt"
+              aria-expanded={scheduleOpen}
+              onClick={() => setScheduleOpen((v) => !v)}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 19V5M5 12l7-7 7 7" />
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5l3 2" />
               </svg>
             </button>
+            {scheduleOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setScheduleOpen(false)} />
+                <div className="absolute z-40 bottom-full mb-1 right-0 min-w-[220px] rounded-xl border border-line bg-panel shadow-2xl p-1.5">
+                  {schedulePresets().map((p) => (
+                    <button
+                      key={p.label}
+                      className="w-full text-left text-sm px-2.5 py-2 rounded-lg hover:bg-paper min-h-[40px]"
+                      onClick={() => {
+                        setScheduledFor(Math.floor(p.at.getTime() / 1000));
+                        setScheduleOpen(false);
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  <label className="block text-xs text-faint px-2.5 pt-2 pb-1">
+                    Choose date and time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    className="w-full text-sm bg-paper border border-line rounded-lg px-2 py-1.5 mb-1"
+                    onChange={(e) => {
+                      const v = e.target.value ? new Date(e.target.value) : null;
+                      if (v && !Number.isNaN(v.getTime())) {
+                        setScheduledFor(Math.floor(v.getTime() / 1000));
+                        setScheduleOpen(false);
+                      }
+                    }}
+                  />
+                  {scheduledFor && (
+                    <button
+                      className="w-full text-left text-sm px-2.5 py-2 rounded-lg hover:bg-paper text-faint min-h-[40px]"
+                      onClick={() => {
+                        setScheduledFor(null);
+                        setScheduleOpen(false);
+                      }}
+                    >
+                      Clear schedule
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Stop keeps its own control — never overloaded onto submit (you may want both). */}
+          {props.running && (
+            <button className="btn danger" onClick={props.onInterrupt} title="Stop the running turn">
+              ⏹ Stop
+            </button>
           )}
+
+          <button
+            className={
+              "h-7 px-2 rounded-full flex items-center gap-1 shrink-0 transition-colors active:scale-95 " +
+              (hasContent && props.connected && !dictation?.recording && !dictationBusy
+                ? "bg-accent text-white hover:brightness-105"
+                : "bg-paper border border-line text-faint")
+            }
+            onClick={() => submit()}
+            disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
+            title={
+              needsModel
+                ? "Connect a model to send"
+                : scheduledFor
+                  ? `Schedule for ${fmtClock(scheduledFor)}`
+                  : props.running
+                    ? "Add to queue — ⌘Enter steers the running turn instead"
+                    : "Send"
+            }
+            aria-label={scheduledFor ? "Schedule prompt" : props.running ? "Add to queue" : "Send"}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {scheduledFor ? (
+                <>
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </>
+              ) : props.running ? (
+                <path d="M4 6h11M4 12h11M4 18h7M18 15v6M15 18h6" />
+              ) : (
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              )}
+            </svg>
+            {(scheduledFor || props.running) && (
+              <span className="text-xs pr-0.5">
+                {scheduledFor ? fmtClock(scheduledFor) : "Queue"}
+              </span>
+            )}
+          </button>
         </div>
       </div>
       <span className="sr-only" role="status" aria-live="polite">
