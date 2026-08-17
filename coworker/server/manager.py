@@ -69,6 +69,7 @@ from ..mcp import (
 )
 from ..memory import MemoryStore, Scope, SQLiteMemoryStore
 from ..permissions import Mode
+from ..projects import ProjectStore, refresh_brief, replace_project_context
 from ..prompt_queue import PromptQueue
 from ..agents import list_agents as _list_agents
 from ..providers import (
@@ -85,6 +86,11 @@ from ..skills import SkillLoader
 _SCOPES = {s.value for s in Scope}
 
 logger = logging.getLogger("coworker.manager")
+
+# How long a project's conversation must stay quiet before its brief is refreshed. Tuned to
+# be longer than a person's gap between messages and shorter than the gap before they come
+# back to read the brief. Overridable so tests do not have to wait it out.
+PROJECT_REFRESH_QUIET_S = float(os.environ.get("COWORKER_PROJECT_REFRESH_QUIET_S", "45"))
 
 
 def _grants_of(engine) -> dict[str, Any]:
@@ -131,6 +137,7 @@ class SessionManager:
         self.memory_store: MemoryStore = SQLiteMemoryStore(base / "coworker.db")
         self.audit_store = AuditStore(base / "coworker.db")
         self.session_store = ConversationStore(base)
+        self.project_store = ProjectStore(base / "projects")
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
@@ -147,6 +154,9 @@ class SessionManager:
         self._autotitle_inflight: set[str] = set()
         self._autotitle_tasks: set[asyncio.Task] = set()
         self._autotitle_attempts: dict[str, int] = {}
+        self._project_tasks: set[asyncio.Task] = set()
+        # One pending refresh per session, so a new turn can cancel the last one.
+        self._project_pending: dict[str, asyncio.Task] = {}
         self.secrets = SecretStore()
         # Browser sign-in state must live for the process lifetime so /v1/providers can
         # report authorizing/errors while the callback completes in a background thread.
@@ -391,7 +401,13 @@ class SessionManager:
             routing_targets=self._routing_targets(session_id, agent),
             # Per-session connection hierarchy: expose only effective-enabled connectors' tools.
             connector_filter=self.effective_connectors(session_id, agent_name),
+            project_context=(
+                self.project_store.prompt_block(record.project_id)
+                if record and record.project_id
+                else ""
+            ),
         )
+        engine.project_id = record.project_id if record else None  # type: ignore[attr-defined]
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
         owning_task = self.task_store.task_for_run_session(session_id)
@@ -1510,6 +1526,142 @@ class SessionManager:
         if added and not self._provider_configured(self._model_provider(self.model)):
             self.set_default_model(added)
         return {"ok": True, "provider": name, "recommended_model": rec}
+
+    # -- projects ---------------------------------------------------------------
+    def _project_summary(self, project) -> dict[str, Any]:
+        return {
+            "id": project.id,
+            "name": project.name,
+            "session_count": len(project.session_ids),
+            "updated_at": self.project_store.updated_at(project),
+        }
+
+    def _project_full(self, project) -> dict[str, Any]:
+        sessions = {
+            row["session_id"]: row for row in self.list_sessions()
+        }
+        return {
+            "id": project.id,
+            "name": project.name,
+            "created": project.created,
+            "session_ids": list(project.session_ids),
+            "instructions": project.instructions,
+            "project_md": self.project_store.read_markdown(project.id),
+            "sessions": [sessions[sid] for sid in project.session_ids if sid in sessions],
+            "files": self.project_store.files(project.id),
+            "updated_at": self.project_store.updated_at(project),
+        }
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        return [self._project_summary(project) for project in self.project_store.list()]
+
+    def create_project(self, body: dict[str, Any]) -> dict[str, Any]:
+        project = self.project_store.create(
+            str(body.get("name") or ""),
+            purpose=str(body.get("purpose") or ""),
+            instructions=str(body.get("instructions") or ""),
+        )
+        return {"ok": True, **self._project_full(project)}
+
+    def get_project(self, project_id: str) -> dict[str, Any]:
+        project = self.project_store.get(project_id)
+        if project is None:
+            return {"ok": False, "error": "no such project"}
+        return {"ok": True, **self._project_full(project)}
+
+    def _refresh_live_project_context(self, project_id: str) -> None:
+        block = self.project_store.prompt_block(project_id)
+        for engine in self._engines.values():
+            if getattr(engine, "project_id", None) != project_id:
+                continue
+            if engine.messages and engine.messages[0].get("role") == "system":
+                engine.messages[0]["content"] = replace_project_context(
+                    str(engine.messages[0].get("content") or ""), block
+                )
+
+    def update_project(self, project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            project = self.project_store.update(
+                project_id,
+                name=str(body["name"]) if "name" in body else None,
+                purpose=str(body["purpose"]) if "purpose" in body else None,
+                instructions=(
+                    str(body["instructions"]) if "instructions" in body else None
+                ),
+            )
+        except KeyError:
+            return {"ok": False, "error": "no such project"}
+        self._refresh_live_project_context(project_id)
+        return {"ok": True, **self._project_full(project)}
+
+    def delete_project(self, project_id: str) -> dict[str, Any]:
+        project = self.project_store.get(project_id)
+        if project is None:
+            return {"ok": False, "error": "no such project"}
+        for session_id in project.session_ids:
+            self.session_store.set_project_id(session_id, None)
+            engine = self._engines.get(session_id)
+            if engine is not None:
+                engine.project_id = None  # type: ignore[attr-defined]
+                if engine.messages and engine.messages[0].get("role") == "system":
+                    engine.messages[0]["content"] = replace_project_context(
+                        str(engine.messages[0].get("content") or "")
+                    )
+        return {"ok": self.project_store.delete(project_id), "id": project_id}
+
+    def attach_project_session(
+        self, project_id: str, session_id: str
+    ) -> dict[str, Any]:
+        if not session_id:
+            return {"ok": False, "error": "session_id required"}
+        record = self.session_store.load(session_id)
+        if record is None:
+            return {"ok": False, "error": "no such session"}
+        project = self.project_store.get(project_id)
+        if project is None:
+            return {"ok": False, "error": "no such project"}
+        if record.project_id and record.project_id != project_id:
+            try:
+                self.project_store.detach(record.project_id, session_id)
+            except KeyError:
+                pass
+        self.project_store.attach(project_id, session_id)
+        self.session_store.set_project_id(session_id, project_id)
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            engine.project_id = project_id  # type: ignore[attr-defined]
+            if engine.messages and engine.messages[0].get("role") == "system":
+                engine.messages[0]["content"] = replace_project_context(
+                    str(engine.messages[0].get("content") or ""),
+                    self.project_store.prompt_block(project_id),
+                )
+        return {"ok": True, "project_id": project_id, "session_id": session_id}
+
+    def refresh_project(self, project_id: str) -> dict[str, Any]:
+        project = self.project_store.get(project_id)
+        if project is None:
+            return {"ok": False, "error": "no such project"}
+        records = [
+            record
+            for sid in project.session_ids
+            if (record := self.session_store.load(sid)) is not None
+        ]
+        if not records:
+            return {"ok": False, "error": "project has no conversations to summarize"}
+        record = max(records, key=lambda item: item.updated_at or "")
+        engine = self._engines.get(record.session_id)
+        messages = list(engine.messages) if engine is not None else record.messages
+        model = engine.model if engine is not None else record.model
+        ok = refresh_brief(
+            self.project_store,
+            project_id,
+            messages,
+            provider=self.provider,
+            model=model,
+        )
+        if ok:
+            self._refresh_live_project_context(project_id)
+        return {"ok": ok, "project_id": project_id}
 
     # -- council ----------------------------------------------------------------
     def council_config(self) -> dict[str, Any]:
@@ -2643,6 +2795,7 @@ class SessionManager:
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
         # can never add latency to the response itself.
         self._maybe_autotitle(session_id)
+        self._maybe_refresh_project(session_id)
 
     def release_running_claim(self, session_id: str) -> None:
         """Release ownership when no turn actually began (so post-turn hooks do not run)."""
@@ -3305,8 +3458,72 @@ class SessionManager:
                 agent=getattr(engine, "agent_name", "code"),
                 extra_roots=self._extra_roots_of(engine),
                 grants=_grants_of(engine),
+                project_id=getattr(engine, "project_id", None),
             )
         )
+
+    def _maybe_refresh_project(self, session_id: str) -> None:
+        """Schedule the evergreen update once the conversation goes quiet.
+
+        Per CONVERSATION, not per turn. This fires from `mark_idle`, which runs after every
+        message, and one model call per message is roughly fifteen times the cost of one per
+        chat on a normal back-and-forth — a bill the owner did not agree to when they chose
+        this. So a new turn cancels the pending refresh and starts the wait again; a burst of
+        twenty messages produces one update, after the last of them.
+        """
+        try:
+            engine = self._engines.get(session_id)
+            project_id = getattr(engine, "project_id", None) if engine else None
+            if not engine or not project_id or session_id.startswith("__"):
+                return
+            loop = asyncio.get_running_loop()
+            pending = self._project_pending.pop(session_id, None)
+            if pending is not None and not pending.done():
+                pending.cancel()
+            task = loop.create_task(
+                self._refresh_project_after_turn(
+                    project_id, list(engine.messages), engine.model, engine, session_id
+                )
+            )
+            self._project_pending[session_id] = task
+            self._project_tasks.add(task)
+            task.add_done_callback(self._project_tasks.discard)
+        except Exception:
+            logger.debug("could not schedule project refresh for %s", session_id, exc_info=True)
+
+    async def _refresh_project_after_turn(
+        self,
+        project_id: str,
+        messages: list[dict[str, Any]],
+        model: str,
+        engine: TurnEngine,
+        session_id: str = "",
+    ) -> None:
+        try:
+            # The quiet period. Long enough that a normal back-and-forth collapses into one
+            # refresh, short enough that a brief read minutes later is already current.
+            await asyncio.sleep(PROJECT_REFRESH_QUIET_S)
+        except asyncio.CancelledError:
+            return  # another turn arrived; that turn's task owns the refresh now
+        finally:
+            if self._project_pending.get(session_id) is asyncio.current_task():
+                self._project_pending.pop(session_id, None)
+        try:
+            await asyncio.to_thread(
+                refresh_brief,
+                self.project_store,
+                project_id,
+                messages,
+                provider=self.provider,
+                model=model,
+            )
+            block = self.project_store.prompt_block(project_id)
+            if engine.messages and engine.messages[0].get("role") == "system":
+                engine.messages[0]["content"] = replace_project_context(
+                    str(engine.messages[0].get("content") or ""), block
+                )
+        except Exception:
+            logger.debug("project refresh failed for %s", project_id, exc_info=True)
 
     @staticmethod
     def _apply_grants(engine: TurnEngine, grants: dict[str, Any]) -> None:
@@ -3621,6 +3838,11 @@ class SessionManager:
             except Exception:
                 pass
         record = self.session_store.load(session_id)
+        if record and record.project_id:
+            try:
+                self.project_store.detach(record.project_id, session_id)
+            except KeyError:
+                pass
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
         self.subscriptions.remove_session(session_id)
@@ -3678,6 +3900,7 @@ class SessionManager:
                 # "From Slack" group and the row's platform icon.
                 "origin": r.origin,
                 "origin_label": r.origin_label,
+                "project_id": r.project_id,
                 # Attention = Inbox items awaiting this session (the amber count that bubbles
                 # session → persona → footer Inbox). Liveness = working (in-flight turn) /
                 # sleeping (a self-wake is pending) / idle — a count-less dot that never bubbles.

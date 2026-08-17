@@ -34,3 +34,4 @@ class SessionRecord:
     # (e.g. origin="slack", origin_label="#general · T0ABCD"). Set once at spawn.
     origin: Optional[str] = None
     origin_label: Optional[str] = None
+    project_id: Optional[str] = None

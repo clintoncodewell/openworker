@@ -27,6 +27,7 @@ from .environment import environment_context
 from .memory import MemoryStore, Scope, format_memories, memory_tools
 from .permissions import Mode, PermissionEngine
 from .project import load_agents_md
+from .projects.store import replace_project_context
 from .roots import RootDir, normalize_roots, render_context
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
@@ -133,6 +134,7 @@ def build_engine(
     channel_buffer: Optional[Any] = None,
     routing_targets: Optional[list[str]] = None,
     connector_filter: Optional[set[str]] = None,
+    project_context: str = "",
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -250,6 +252,8 @@ def build_engine(
         conventions = load_agents_md(ws)
         if conventions:
             instructions = f"{instructions}\n\n{conventions}"
+    if project_context:
+        instructions = f"{instructions}\n\n{project_context}"
 
     if memory_store is not None:
         registry.register_all(
@@ -306,6 +310,12 @@ def build_engine(
             if ctx:
                 parts.append(ctx)
         return "\n\n".join(parts)
+
+    if messages and messages[0].get("role") == "system":
+        messages = [dict(message) for message in messages]
+        messages[0]["content"] = replace_project_context(
+            str(messages[0].get("content") or ""), project_context
+        )
 
     engine = TurnEngine(
         provider=provider,

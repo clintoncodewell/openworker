@@ -505,6 +505,35 @@ def create_app(manager: SessionManager) -> FastAPI:
     def sessions(workspace: str | None = None) -> dict[str, Any]:
         return {"sessions": manager.list_sessions(workspace)}
 
+    # -- projects ---------------------------------------------------------------
+    @app.get("/v1/projects")
+    def projects_get() -> dict[str, Any]:
+        return {"projects": manager.list_projects()}
+
+    @app.post("/v1/projects")
+    def projects_create(body: dict) -> dict[str, Any]:
+        return manager.create_project(body or {})
+
+    @app.get("/v1/projects/{project_id}")
+    def project_get(project_id: str) -> dict[str, Any]:
+        return manager.get_project(project_id)
+
+    @app.post("/v1/projects/{project_id}")
+    def project_update(project_id: str, body: dict) -> dict[str, Any]:
+        return manager.update_project(project_id, body or {})
+
+    @app.delete("/v1/projects/{project_id}")
+    def project_delete(project_id: str) -> dict[str, Any]:
+        return manager.delete_project(project_id)
+
+    @app.post("/v1/projects/{project_id}/sessions")
+    def project_attach_session(project_id: str, body: dict) -> dict[str, Any]:
+        return manager.attach_project_session(project_id, str((body or {}).get("session_id", "")))
+
+    @app.post("/v1/projects/{project_id}/refresh")
+    async def project_refresh(project_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(manager.refresh_project, project_id)
+
     @app.get("/v1/sessions/{session_id}/messages")
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}

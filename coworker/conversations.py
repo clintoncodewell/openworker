@@ -76,6 +76,7 @@ class ConversationStore:
                 title TEXT, agent TEXT DEFAULT 'code', n_msgs INTEGER DEFAULT 0, messages TEXT,
                 extra_roots TEXT, pinned INTEGER DEFAULT 0, archived INTEGER DEFAULT 0,
                 origin TEXT, origin_label TEXT,
+                project_id TEXT,
                 auto_title TEXT, renamed INTEGER DEFAULT 0,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -95,6 +96,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN auto_title TEXT",
             "ALTER TABLE sessions ADD COLUMN renamed INTEGER DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN grants TEXT",
+            "ALTER TABLE sessions ADD COLUMN project_id TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -191,13 +193,14 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, project_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
-                    grants = excluded.grants, updated_at = CURRENT_TIMESTAMP
+                    grants = excluded.grants, project_id = excluded.project_id,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
                 (
                     sid,
@@ -209,6 +212,7 @@ class ConversationStore:
                     len(record.messages),
                     json.dumps(record.extra_roots or []),
                     json.dumps(record.grants or {}),
+                    record.project_id,
                 ),
             )
             self._conn.commit()
@@ -245,6 +249,7 @@ class ConversationStore:
             archived=bool(row["archived"]),
             origin=row["origin"],
             origin_label=row["origin_label"],
+            project_id=row["project_id"] if "project_id" in row.keys() else None,
         )
 
     def set_extra_roots(self, session_id: str, extra_roots: list[dict]) -> None:
@@ -283,6 +288,7 @@ class ConversationStore:
                 archived=bool(r["archived"]),
                 origin=r["origin"],
                 origin_label=r["origin_label"],
+                project_id=r["project_id"] if "project_id" in r.keys() else None,
             )
             for r in rows
         ]
@@ -414,6 +420,15 @@ class ConversationStore:
             cur = self._conn.execute(
                 "UPDATE sessions SET origin = ?, origin_label = ? WHERE session_id = ?",
                 (origin, origin_label or None, session_id),
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def set_project_id(self, session_id: str, project_id: Optional[str]) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE sessions SET project_id = ? WHERE session_id = ?",
+                (project_id, session_id),
             )
             self._conn.commit()
         return cur.rowcount > 0
