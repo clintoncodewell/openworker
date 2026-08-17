@@ -1,0 +1,19 @@
+surfaces/gui/src/App.tsx
+  s_3f16b4dbfd2cda::t_6e3ac05b31082f 272-279,282,289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "2bf58ce678bb7fde1cddf61ac2d196b600710846",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
