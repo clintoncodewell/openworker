@@ -1914,8 +1914,12 @@ export const PROJECTS_CHANGED = "ocw-projects-changed";
 export const announceProjectsChanged = () => window.dispatchEvent(new Event(PROJECTS_CHANGED));
 
 export async function getProjects(): Promise<ProjectSummary[]> {
+  // The list route wraps its result — `{projects: [...]}` — while every other project route
+  // returns the object bare. Unwrapping here keeps that asymmetry out of the components,
+  // and the fallback means a shape change breaks the list rather than throwing on `.map`.
   const res = await fetch(`${httpBase()}/v1/projects`);
-  return res.json();
+  const body = await res.json();
+  return Array.isArray(body) ? body : (body?.projects ?? []);
 }
 
 export async function createProject(payload: {
