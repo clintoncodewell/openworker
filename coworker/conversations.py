@@ -199,7 +199,13 @@ class ConversationStore:
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
-                    grants = excluded.grants, project_id = excluded.project_id,
+                    grants = excluded.grants,
+                    -- COALESCE, like `title` above: a record materialised BEFORE the
+                    -- session was attached to a project still carries project_id NULL, and
+                    -- an unconditional write from it unlinks the session while the live
+                    -- engine still believes it is attached. The row and the project folder
+                    -- then disagree, and nothing notices.
+                    project_id = COALESCE(excluded.project_id, sessions.project_id),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (

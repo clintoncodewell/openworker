@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from datetime import date
 from typing import Any
 
@@ -83,6 +84,19 @@ def _cap_threads(threads: list[tuple[bool, str]]) -> list[tuple[bool, str]]:
     return threads
 
 
+# One project, one refresh at a time. A project holds MANY conversations, and two finishing
+# together both read the same brief, both append to it, and the second write silently
+# discards the first — no error, no torn file, just one conversation's fold-in gone. The
+# lock is process-wide because the sidecar is the only writer.
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(project_id: str) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(project_id, threading.Lock())
+
+
 def refresh_brief(
     store: ProjectStore,
     project_id: str,
@@ -92,6 +106,18 @@ def refresh_brief(
     model: str,
 ) -> bool:
     """Refresh one brief. Every failure is a missed refresh, never a failed turn."""
+    with _lock_for(project_id):
+        return _refresh_locked(store, project_id, messages, provider=provider, model=model)
+
+
+def _refresh_locked(
+    store: ProjectStore,
+    project_id: str,
+    messages: list[dict[str, Any]],
+    *,
+    provider: Any,
+    model: str,
+) -> bool:
     try:
         before = store.read_markdown(project_id)
         turn = provider.complete(

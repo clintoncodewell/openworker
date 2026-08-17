@@ -3517,6 +3517,11 @@ class SessionManager:
                 provider=self.provider,
                 model=model,
             )
+            # The session can be moved to a different project during the quiet period and
+            # the model call. Splicing the captured project's brief in regardless would
+            # leave the live conversation carrying another project's standing instructions.
+            if getattr(engine, "project_id", None) != project_id:
+                return
             block = self.project_store.prompt_block(project_id)
             if engine.messages and engine.messages[0].get("role") == "system":
                 engine.messages[0]["content"] = replace_project_context(

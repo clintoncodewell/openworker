@@ -1891,6 +1891,86 @@ export async function setCouncilConfig(
   return res.json();
 }
 
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  session_count: number;
+  updated_at: string;
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  created: string;
+  session_ids: string[];
+  instructions: string;
+  project_md: string;
+  sessions: SessionInfo[];
+  files: string[];
+  updated_at: string;
+};
+
+export const PROJECTS_CHANGED = "ocw-projects-changed";
+export const announceProjectsChanged = () => window.dispatchEvent(new Event(PROJECTS_CHANGED));
+
+export async function getProjects(): Promise<ProjectSummary[]> {
+  const res = await fetch(`${httpBase()}/v1/projects`);
+  return res.json();
+}
+
+export async function createProject(payload: {
+  name: string;
+  purpose?: string;
+  instructions?: string;
+}): Promise<Project> {
+  const res = await fetch(`${httpBase()}/v1/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+export async function getProject(id: string): Promise<Project> {
+  const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}`);
+  return res.json();
+}
+
+export async function updateProject(
+  id: string,
+  patch: { name?: string; purpose?: string; instructions?: string },
+): Promise<Project> {
+  const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+export async function deleteProject(id: string): Promise<{ ok: boolean; id: string }> {
+  const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+export async function addProjectSession(id: string, sessionId: string): Promise<Project> {
+  const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  return res.json();
+}
+
+export async function refreshProject(id: string): Promise<Project> {
+  const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}/refresh`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
 export async function testCouncilSource(
   source: Partial<CouncilSource>,
 ): Promise<{ ok: boolean; error?: string; chars?: number; truncated?: boolean; preview?: string }> {

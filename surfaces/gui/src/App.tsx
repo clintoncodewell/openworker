@@ -45,6 +45,7 @@ import { FolderGate } from "./components/FolderGate";
 import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ScheduledView } from "./components/ScheduledView";
+import { ProjectsView } from "./components/ProjectsView";
 import { RightRail } from "./components/RightRail";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { SettingsView } from "./components/SettingsView";
@@ -198,7 +199,7 @@ export function App() {
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
+    "session" | "projects" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
   >("session");
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
@@ -1311,6 +1312,7 @@ export function App() {
           openPersona(id, "session");
         }}
         onManagePersonas={() => openSettings("personas")}
+        onOpenProjects={() => setSurface("projects")}
         onOpenScheduled={() => setSurface("scheduled")}
         onOpenAutomation={(id) => {
           setScheduledOpenId(id);
@@ -1320,6 +1322,7 @@ export function App() {
         onOpenAudit={() => setSurface("audit")}
         onOpenInbox={() => setSurface("inbox")}
         scheduledActive={surface === "scheduled"}
+        projectsActive={surface === "projects"}
         integrationsActive={surface === "integrations"}
         auditActive={surface === "audit"}
         inboxActive={surface === "inbox"}
@@ -1327,7 +1330,9 @@ export function App() {
         onCollapse={toggleNav}
         onPeekLeave={() => setNavPeek(false)}
       />
-      {surface === "scheduled" ? (
+      {surface === "projects" ? (
+        <ProjectsView recentSessions={sessions} onOpenSession={selectSession} />
+      ) : surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}
           onRunNow={runTaskNow}

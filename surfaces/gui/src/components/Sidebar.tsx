@@ -8,9 +8,11 @@ import {
   getAutomations,
   getCloudStatus,
   getPersonas,
+  getProjects,
   getSettings,
   INBOX_UNLOCK,
   PERSONAS_CHANGED,
+  PROJECTS_CHANGED,
   setNavLayout,
   waitForCloudSignIn,
   type Automation,
@@ -66,6 +68,18 @@ function UnseenBadge({ n, failed }: { n: number; failed?: boolean }) {
     <span
       className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
       title={failed ? `${n} new run${n > 1 ? "s" : ""} — the latest failed` : `${n} new run${n > 1 ? "s" : ""}`}
+    >
+      {n > 99 ? "99+" : n}
+    </span>
+  );
+}
+
+function ProjectCountBadge({ n }: { n: number }) {
+  if (!n) return null;
+  return (
+    <span
+      className="text-[10px] font-semibold text-ink bg-faint/30 rounded-full px-1.5 leading-[15px] shrink-0"
+      title={`${n} project${n === 1 ? "" : "s"}`}
     >
       {n > 99 ? "99+" : n}
     </span>
@@ -132,12 +146,14 @@ interface Props {
   onOpenPersona: (id: string) => void;
   onManagePersonas: () => void;
   onOpenScheduled: () => void;
+  onOpenProjects: () => void;
   // Scheduled-band row click: open the Automations surface ON that automation (UX-023).
   onOpenAutomation: (id: string) => void;
   onOpenIntegrations: () => void;
   onOpenAudit: () => void;
   onOpenInbox: () => void;
   scheduledActive: boolean;
+  projectsActive: boolean;
   integrationsActive: boolean;
   auditActive: boolean;
   inboxActive: boolean;
@@ -211,6 +227,13 @@ export function Sidebar(props: Props) {
       clearInterval(t);
       window.removeEventListener(AUTOMATIONS_CHANGED, load);
     };
+  }, []);
+  const [projectCount, setProjectCount] = useState(0);
+  useEffect(() => {
+    const load = () => getProjects().then((items) => setProjectCount(items.length)).catch(() => {});
+    load();
+    window.addEventListener(PROJECTS_CHANGED, load);
+    return () => window.removeEventListener(PROJECTS_CHANGED, load);
   }, []);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -1021,6 +1044,21 @@ export function Sidebar(props: Props) {
           onClick={() => setSearchModalOpen(true)}
         >
           <Icon name="search" size={15} className="shrink-0" /> Search
+        </button>
+      </div>
+
+      <div className="px-2.5 mt-1">
+        <button
+          className={
+            "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left hover:bg-paper hover:text-ink " +
+            (props.projectsActive ? "text-ink bg-paper" : "text-muted")
+          }
+          data-testid="nav-projects"
+          onClick={props.onOpenProjects}
+        >
+          <Icon name="folder" size={15} className="shrink-0" />
+          <span className="flex-1">Projects</span>
+          <ProjectCountBadge n={projectCount} />
         </button>
       </div>
 
