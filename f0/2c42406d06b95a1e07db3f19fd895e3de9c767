@@ -1,0 +1,264 @@
+tests/test_magic_sort.py
+  s_4d2e7c4eaa0286::t_ba1a48f3975778 37-44,63,86
+  s_4d2e7c4eaa0286::t_dcfde9b9a0eac4 1,45,79
+  s_4d2e7c4eaa0286::t_1d8bb03a2e3aa9 2-36,46-62,64-78,80-85,87-113
+surfaces/gui/src/api.ts
+  s_b1e50f406e1b49::t_8ac43200d83c89 727,834-842,847-848,1309-1310
+  s_4d2e7c4eaa0286::t_b5ac3c1b34f519 166-209,843-844,846
+  s_d1f98cc92ba60a::t_d0a048ce3c6453 750-786,1306-1308
+  s_f014b6453849aa::t_b99e33958610aa 1,117-165,210-218,732,863-864
+  s_88bfed3712701a::t_fa655145655015 845,849,1311
+coworker/agents/chat.py
+  s_b1e50f406e1b49::t_15744dce31b8a4 13-14
+  s_b1e50f406e1b49::t_119c14f5a32786 5,8-9,11-12,26
+tests/test_chatgpt_provider.py
+  s_d1f98cc92ba60a::t_1edde50b8d5db2 11,77,92-101,124-128
+surfaces/gui/src/components/Composer.voice.test.tsx
+  s_7c6e917a7c630c::t_07cc89f9d7f574 25
+surfaces/gui/src/components/Sidebar.test.tsx
+  s_f014b6453849aa::t_ea641168773959 54,56-57,114-144,226,373-408
+  s_4d2e7c4eaa0286::t_e11d1ed307a848 145-159,225
+  s_4d2e7c4eaa0286::t_bc905e8e71e1b4 55,160-164,170-224
+  s_7bd927e725f98d::t_32df9e09e895e4 228-314
+  s_4d2e7c4eaa0286::t_934e324ec5214c 165-169
+  s_88bfed3712701a::t_4a5994cf2640e9 227
+surfaces/gui/src/tauri.ts
+  s_60f8901920d641::t_4fb7673a35caf0 79
+surfaces/gui/src/components/Composer.council.test.tsx
+  s_7c6e917a7c630c::t_07cc89f9d7f574 9
+coworker/sessions.py
+  s_f014b6453849aa::t_6215d3c8aed0bc 38
+coworker/server/app.py
+  s_d1f98cc92ba60a::t_9364eb760d978d 1316,1321
+  s_4d2e7c4eaa0286::t_1d8bb03a2e3aa9 568-575
+  s_b1e50f406e1b49::t_1487fc6e892349 1355-1362
+  s_f014b6453849aa::t_75c74adc044b86 513-528,557-562
+  s_4d2e7c4eaa0286::t_e11d1ed307a848 563-566
+  s_d1f98cc92ba60a::t_8cb4c5ee583ea8 1317-1320
+  s_0543a85fd10392::t_31ee1b7596668b 567
+coworker/conversations.py
+  s_f014b6453849aa::t_ef5eb072fffe10 22,410,420,422
+  s_f014b6453849aa::t_6215d3c8aed0bc 82,103,200-201,213,227,265,305,412,421
+  s_b1e50f406e1b49::t_64ad61e2ec4066 23
+surfaces/gui/src/components/SettingsView.usage.test.tsx
+  s_d1f98cc92ba60a::t_e39ad12728e069 1-71
+coworker/providers/chatgpt_provider.py
+  s_d1f98cc92ba60a::t_034a26f63882c8 18,197
+coworker/providers/registry.py
+  s_3f16b4dbfd2cda::t_ca2a6d306a7d10 118-120,122-124
+  s_d1f98cc92ba60a::t_6dab099cfa1dab 121,125,145-148,161-166,189,221
+tests/test_settings.py
+  s_b1e50f406e1b49::t_420d0401c088e6 170-176,178-180,182-183,191,193,195,197,205-206
+  s_b1e50f406e1b49::t_15744dce31b8a4 185-187
+  s_f014b6453849aa::t_ebab0ef2971142 125-128
+  s_b1e50f406e1b49::t_a09903b7d5e6e6 177,181,192,194,198
+  s_b1e50f406e1b49::t_9abfe425b705dd 188-190,199-201
+  s_b1e50f406e1b49::t_f58315365ee01b 78-81,184,196,202-204
+tests/test_code_tools.py
+  s_3f16b4dbfd2cda::t_ae0e4f009295a3 69-83
+surfaces/gui/src/types.ts
+  s_f014b6453849aa::t_b99e33958610aa 55,69-72
+  s_3f16b4dbfd2cda::t_411462798838bf 73-74
+coworker/agent.py
+  s_b1e50f406e1b49::t_119c14f5a32786 130,159,161-165
+tests/test_catalog.py
+  s_b1e50f406e1b49::t_420d0401c088e6 13,62-70,116-132
+  s_3f16b4dbfd2cda::t_2247d6c6ef0310 133-134
+coworker/agents/base.py
+  s_b1e50f406e1b49::t_119c14f5a32786 20-21
+surfaces/gui/src-tauri/src/lib.rs
+  s_60f8901920d641::t_4fb7673a35caf0 274-284,617
+coworker/server/manager.py
+  s_f014b6453849aa::t_bad0f43f0ca66a 39,142,637-640,646-649,1565-1608,2369-2371,2375-2376,4251
+  s_b1e50f406e1b49::t_8255ca315828e7 339,341-349,409,431
+  s_4d2e7c4eaa0286::t_1d8bb03a2e3aa9 1610-1618,1621-1684,1686-1845
+  s_4d2e7c4eaa0286::t_9b20bb951c8711 1619-1620,1685
+  s_4d2e7c4eaa0286::t_e11d1ed307a848 641-645
+  s_d1f98cc92ba60a::t_a54621bfba50bb 2346
+  s_b1e50f406e1b49::t_a09903b7d5e6e6 2504,2510
+  s_d1f98cc92ba60a::t_9364eb760d978d 2342-2345,2347
+  s_b1e50f406e1b49::t_1487fc6e892349 294-301,2335,2495-2503,2505-2508,3036
+  s_a397245edd3f67::t_1e2829b363800c 1609,2509,2511
+coworker/providers/anthropic_provider.py
+  s_d1f98cc92ba60a::t_8f939b2beac5fa 34,352,364,368-382,452-453,459,519-520,526
+surfaces/gui/src/components/SettingsView.tsx
+  s_d1f98cc92ba60a::t_1aee1d4d422a64 67
+  s_b1e50f406e1b49::t_8ac43200d83c89 5,23,857-858,866,887-901,933-963
+  s_d1f98cc92ba60a::t_f591700feb74f4 153-230,232-329
+  s_d1f98cc92ba60a::t_ccd5801b155176 231
+  s_d1f98cc92ba60a::t_d0a048ce3c6453 4,12-13,53,71,132-133
+coworker/tools/search.py
+  s_b1e50f406e1b49::t_15744dce31b8a4 4,88-90
+  s_b1e50f406e1b49::t_119c14f5a32786 1,69-87,91-105,108-109,111-116,127,129,161-163,165,171
+  s_3f16b4dbfd2cda::t_edc80064fe7af9 188-194,197
+tests/test_usage.py
+  s_d1f98cc92ba60a::t_e1e4e72405739a 177-179
+  s_097c9faef9b79c::t_67cfe58517db19 150
+  s_097c9faef9b79c::t_64fbd7b0217608 10-15,104-149,151-153
+  s_d1f98cc92ba60a::t_1edde50b8d5db2 1-9,16-103,154-176,180-185
+coworker/providers/usage.py
+  s_097c9faef9b79c::t_64fbd7b0217608 169-178,183-190,201-203
+  s_3f16b4dbfd2cda::t_9b7019323fa434 359-403,405,410-412
+  s_d1f98cc92ba60a::t_a54621bfba50bb 353-355
+  s_3f16b4dbfd2cda::t_294339e55552d6 302-304
+  s_3f16b4dbfd2cda::t_b0a21e78e46450 245,247-255
+  s_097c9faef9b79c::t_67cfe58517db19 179-182,191-200
+  s_3f16b4dbfd2cda::t_237551288e3811 105-115
+  s_d1f98cc92ba60a::t_564a7cceca9f2d 1-10,12-104,116-168,204-244,246,256-301,305-352,356-358,404,406-409,413-424,426-450,454-466
+  s_3f16b4dbfd2cda::t_97fb76e46ded2a 425
+  s_3f16b4dbfd2cda::t_52eeeb77e7ca3f 11
+  s_3f16b4dbfd2cda::t_35db02b5328b8a 451-453
+coworker/agents/cowork.py
+  s_b1e50f406e1b49::t_119c14f5a32786 16
+surfaces/gui/src/components/Composer.tsx
+  s_7c6e917a7c630c::t_07cc89f9d7f574 6,9,73,142-143,149,518-539,856
+surfaces/gui/src/App.tsx
+  s_4d2e7c4eaa0286::t_b49b8f3117b812 4,30,1107-1111,1347
+  s_f014b6453849aa::t_fd5bd468b474c3 5-6,25,1103-1106,1112-1129,1346,1348-1349
+  s_60f8901920d641::t_4fb7673a35caf0 41,1198-1201,1407-1411,1451-1455,1472-1476
+  s_7c6e917a7c630c::t_07cc89f9d7f574 1629
+coworker/catalog.py
+  s_b1e50f406e1b49::t_119c14f5a32786 26,33,94-97,139-144
+  s_3f16b4dbfd2cda::t_21c935c00870fb 145-146
+coworker/chat_folders.py
+  s_f014b6453849aa::t_6215d3c8aed0bc 1-76
+coworker/agents/code.py
+  s_b1e50f406e1b49::t_15744dce31b8a4 9-16
+tests/test_chat_folders.py
+  s_f014b6453849aa::t_319a9bfacafea2 42-50
+  s_4d2e7c4eaa0286::t_e11d1ed307a848 78-95,99,102,114-117,123,125-130
+  s_4d2e7c4eaa0286::t_3a880c156bbeb9 131-138
+  s_f014b6453849aa::t_16af16c35b9772 15-22,51,55,57,60-64,66-70,73,75,96,103-104,106,110,119
+  s_f014b6453849aa::t_ebab0ef2971142 1-14,23-41,52-54,56,58-59,65,71-72,74,76-77,97-98,100-101,105,107-109,111-113,118,120-122,124
+surfaces/gui/src/components/Sidebar.tsx
+  s_7bd927e725f98d::t_32df9e09e895e4 250-255,551-567,576-590,653-656,809-839,1592-1617,1621,1632-1636,1638-1667
+  s_4d2e7c4eaa0286::t_a3fcb5ca30fb94 1,377,389-390,397,410,416,1118-1119
+  s_f014b6453849aa::t_55b9075cb84420 593-607,1590-1591,1618-1620,1622-1631,1637,1668-1687,1690-1698
+  s_f014b6453849aa::t_319a9bfacafea2 292,614,736
+  s_f014b6453849aa::t_8198ed07ca8676 568-575,591-592,608-613,615-634,636-652,657-669,726-735,737-747,778-808,840-841
+  s_4d2e7c4eaa0286::t_bc2e63d60dedc9 1027-1117,1120-1137,1212-1220,1264,1699
+  s_f014b6453849aa::t_3e1515a27f18ed 8,14,19,30,150,152-153,259-274,286,340-341,348-354,361
+  s_f014b6453849aa::t_0387ae3a78281d 1150,1157-1159,1161-1176,1178-1179,1181-1185,1197-1200
+  s_3f16b4dbfd2cda::t_bf1f1d3d1bc18b 635
+  s_4d2e7c4eaa0286::t_f9a604d118a052 1177,1180
+  s_3f16b4dbfd2cda::t_d1d3ab1b28af4a 1688-1689
+  s_4d2e7c4eaa0286::t_ffb332a752d0de 371-376,388,391-396,398-409,411-415,417-439
+  s_4d2e7c4eaa0286::t_2d7e867b01bee4 15,24-25,151
+  s_3f16b4dbfd2cda::t_234968d06fd313 1151-1156,1160
+  s_83d0a88c045641::t_9f0bf555e4c0cf 440
+coworker/providers/openai_provider.py
+  s_d1f98cc92ba60a::t_346566e6183505 22,156,180-182,185-199,238,256,261,265,292,314,319,329
+  s_d1f98cc92ba60a::t_b28cb3f7685919 78,94,569,576-578,591,599
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "f02c42406d06b95a1e07db3f19fd895e3de9c767",
+  "prompts": {},
+  "sessions": {
+    "s_0543a85fd10392": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9bc0130b-2546-4e37-a348-476b4250348e",
+        "model": "glm-5.3"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_097c9faef9b79c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00fa4-8273-72a1-b925-92bd58369143",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_4d2e7c4eaa0286": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00fc1-a8d4-7172-a281-c464bc8d1925",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_60f8901920d641": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00f52-8d83-7881-8c02-30275251aecc",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_7bd927e725f98d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00faf-6757-7bc1-92c2-559f37d241f9",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_7c6e917a7c630c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00f52-e780-7653-9d3e-7a3f75f5edb5",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_83d0a88c045641": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b0a3069-6552-490f-a471-30b0c9b43a22",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_88bfed3712701a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f881224b-c725-46c3-888b-8a3a27b13fa7",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_a397245edd3f67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "95d021fc-a5b3-4b3d-aac3-baec40c1200d",
+        "model": "glm-5.3"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_b1e50f406e1b49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00f56-086e-7953-81e8-fcca2162c890",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_d1f98cc92ba60a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00f81-71f6-70b0-afeb-aefe7029deff",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_f014b6453849aa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a00f5c-0a65-7593-a68a-8d44ae1165c1",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
