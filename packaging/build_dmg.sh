@@ -69,6 +69,22 @@ if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   security list-keychains -d user -s "$KC" login.keychain-db
 fi
 
+# Rebuild the venv when it cannot run. The usual cause is an rsync from a Linux dev box
+# that copied ITS .venv over this one, leaving python symlinks pointing at /home paths that
+# do not exist here — the directory looks present and every binary in it is dead. Repairing
+# it here rather than at the call site means the build works however the source arrived.
+if ! "$PLATFORM/.venv/bin/python" -c "import PyInstaller" >/dev/null 2>&1; then
+  echo "==> [0/5] rebuilding the build virtualenv (it cannot import PyInstaller)"
+  rm -rf "$PLATFORM/.venv"
+  if command -v uv >/dev/null 2>&1; then
+    uv venv "$PLATFORM/.venv" --python 3.12
+    VIRTUAL_ENV="$PLATFORM/.venv" uv pip install -q -e "$PLATFORM" pyinstaller
+  else
+    python3 -m venv "$PLATFORM/.venv"
+    "$PLATFORM/.venv/bin/pip" install -q -e "$PLATFORM" pyinstaller
+  fi
+fi
+
 echo "==> [1/5] PyInstaller: bundling openworker-server ($TRIPLE)"
 "$PLATFORM/.venv/bin/pyinstaller" --noconfirm --clean \
   --distpath "$HERE/dist" --workpath "$HERE/build" "$HERE/openworker-server.spec"
