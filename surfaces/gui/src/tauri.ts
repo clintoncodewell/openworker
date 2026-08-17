@@ -78,6 +78,14 @@ export const setKeepAwake = (enabled: boolean) => invoke<boolean>("set_keep_awak
 export const startWindowDrag = () => invoke<boolean>("start_window_drag");
 export const toggleWindowZoom = () => invoke<boolean>("toggle_window_zoom");
 
+// A double-click anywhere on the titlebar zooms, EXCEPT on a control. Written as a
+// predicate over the controls rather than "is this the drag element itself", because the
+// title is a <span> inside the drag element: the stricter test shipped once and made
+// double-clicking the visible title — the obvious target — do nothing.
+const TITLEBAR_CONTROLS = "button, a, input, textarea, select, [role='button']";
+export const zoomsOnTitlebarDoubleClick = (target: EventTarget | null): boolean =>
+  !(target as HTMLElement | null)?.closest?.(TITLEBAR_CONTROLS);
+
 // Local dictation is native-only. The browser build deliberately keeps this unavailable rather
 // than silently sending microphone audio to a server.
 export const getDictationStatus = () => invoke<DictationStatus>("get_dictation_status");

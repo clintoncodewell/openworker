@@ -127,12 +127,18 @@ def _window(
     if used is not None:
         out["used_percent"] = max(0.0, min(100.0, used))
         out["remaining_percent"] = max(0.0, min(100.0, 100.0 - used))
+    # Same rule as _plan()/credits: these come from undocumented endpoints and are rendered
+    # as React children, so only scalars may pass. Falling back to the raw value let a dict
+    # or list through and put the whole Usage tab one vendor change away from unmounting.
     remaining_number = _number(remaining)
-    out["remaining"] = remaining_number if remaining_number is not None else remaining
-    if out["remaining"] is None:
-        out.pop("remaining")
-    if reset_at not in (None, ""):
-        out["reset_at"] = reset_at
+    if remaining_number is not None:
+        out["remaining"] = remaining_number
+    elif isinstance(remaining, str) and remaining.strip():
+        out["remaining"] = remaining.strip()
+    if isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
+        out["reset_at"] = reset_at  # epoch seconds — keep it numeric for the formatter
+    elif isinstance(reset_at, str) and reset_at.strip():
+        out["reset_at"] = reset_at.strip()
     seconds = _number(window_seconds)
     if seconds is not None:
         out["limit_window_seconds"] = seconds

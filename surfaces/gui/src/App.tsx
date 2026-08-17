@@ -38,7 +38,13 @@ import { baseName } from "./paths";
 import { itemsFromMessages, userItemFromContent } from "./itemsFromMessages";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
-import { isTauri, platformOS, startWindowDrag, toggleWindowZoom } from "./tauri";
+import {
+  isTauri,
+  platformOS,
+  startWindowDrag,
+  toggleWindowZoom,
+  zoomsOnTitlebarDoubleClick,
+} from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
@@ -1201,7 +1207,7 @@ export function App() {
     startWindowDrag();
   };
   const handleTitlebarDoubleClick = (event: React.MouseEvent) => {
-    if (!desktop || event.target !== event.currentTarget) return;
+    if (!desktop || !zoomsOnTitlebarDoubleClick(event.target)) return;
     toggleWindowZoom();
   };
 
