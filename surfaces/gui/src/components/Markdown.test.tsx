@@ -36,3 +36,39 @@ describe("Markdown artifact links", () => {
     expect(screen.getByTestId("artifact-chip").textContent).toContain("report.pdf");
   });
 });
+
+// Source links in a council finding were dead in the shipped app: `target="_blank"` opens a
+// tab in the dev build and does nothing in the desktop webview, which has no window to open.
+describe("Markdown external links", () => {
+  afterEach(() => delete (globalThis as any).__TAURI__);
+
+  it("hands an http link to the desktop opener instead of a dead _blank", () => {
+    const openUrl = vi.fn(async () => {});
+    (globalThis as any).__TAURI__ = { opener: { openUrl } };
+
+    render(<Markdown text="See [MSCI](https://www.msci.com/wealth) for the data." />);
+    fireEvent.click(screen.getByText("MSCI"));
+    expect(openUrl).toHaveBeenCalledWith("https://www.msci.com/wealth");
+  });
+
+  it("falls back to window.open outside the desktop app", () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    render(<Markdown text="See [MSCI](https://www.msci.com/wealth)." />);
+    fireEvent.click(screen.getByText("MSCI"));
+    expect(open).toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("leaves a modified click alone, so open-in-new-window still works", () => {
+    const openUrl = vi.fn(async () => {});
+    (globalThis as any).__TAURI__ = { opener: { openUrl } };
+    render(<Markdown text="[MSCI](https://www.msci.com/wealth)" />);
+    fireEvent.click(screen.getByText("MSCI"), { metaKey: true });
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("still autolinks a bare URL the panel pasted", () => {
+    render(<Markdown text="Source: https://www.msci.com/wealth" />);
+    expect(screen.getByText("https://www.msci.com/wealth").tagName).toBe("A");
+  });
+});

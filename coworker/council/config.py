@@ -505,19 +505,6 @@ class CouncilConfig:
         )
         if cfg.preset not in PRESETS:
             cfg.preset = "analysis"
-        # A config saved before `depth` existed still means what it said. Adopting the
-        # default would quietly re-price it — someone who chose one round and no web search
-        # would start getting two rounds with search, and a bigger bill, having changed
-        # nothing. So an older file that disagrees with the default is read as "custom",
-        # which is what it was.
-        if "depth" not in raw:
-            standard = DEPTHS[DEFAULT_DEPTH]
-            if cfg.rounds != standard["rounds"] or bool(cfg.research) != standard["research"]:
-                cfg.depth = "custom"
-        if cfg.depth not in DEPTHS and cfg.depth != "custom":
-            cfg.depth = DEFAULT_DEPTH
-        if cfg.detail not in DETAILS:
-            cfg.detail = DEFAULT_DETAIL
         try:
             cfg.rounds = max(1, min(int(cfg.rounds), MAX_ROUNDS))
         except (TypeError, ValueError):
@@ -526,6 +513,24 @@ class CouncilConfig:
         # "false" is a non-empty string and therefore truthy — the one coercion that
         # silently turns a setting ON when the config said to turn it off.
         cfg.research = _as_bool(cfg.research, True)
+
+        # Runs AFTER the coercions above, and that ordering is the whole point: `research`
+        # arrives as the string "false" from a hand-edited file, which is truthy, so reading
+        # it raw made a no-search config look like the default — and the default then turns
+        # search back on.
+        #
+        # A config saved before `depth` existed still means what it said. Adopting the new
+        # default would quietly re-price it: someone who chose one round and no web search
+        # would start paying for two rounds with search, having changed nothing. So an older
+        # file that disagrees with the default is read as "custom", which is what it was.
+        if "depth" not in raw:
+            standard = DEPTHS[DEFAULT_DEPTH]
+            if cfg.rounds != standard["rounds"] or cfg.research != standard["research"]:
+                cfg.depth = "custom"
+        if cfg.depth not in DEPTHS and cfg.depth != "custom":
+            cfg.depth = DEFAULT_DEPTH
+        if cfg.detail not in DETAILS:
+            cfg.detail = DEFAULT_DETAIL
         # 0 means "no guard", so a negative value must NOT be clamped to it — that would
         # turn a typo into a silently disabled safety limit. Only an explicit 0 disables.
         try:
@@ -585,7 +590,7 @@ def save_config(cfg: CouncilConfig, path: Optional[Path] = None) -> CouncilConfi
     p = path or config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     data = cfg.to_dict()
-    for key in ("defaults", "default_roles"):  # derived, never stored
+    for key in ("defaults", "default_roles", "depths", "details"):  # derived, never stored
         data.pop(key, None)
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")

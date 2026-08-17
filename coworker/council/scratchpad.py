@@ -105,7 +105,14 @@ class Scratchpad:
         lines = []
         for e in self.entries:
             who = (alias or {}).get(e["model"], e["model"])
-            lines.append(f"- [{who} · {e['role']}] {e['note']}" if e["role"] else f"- [{who}] {e['note']}")
+            note = e["note"]
+            if alias:
+                # A note naming another member ("gpt-5.6-sol is wrong about the queue") would
+                # otherwise carry the real names past the aliased author label.
+                from .core import scrub
+
+                note = scrub(note, alias)
+            lines.append(f"- [{who} · {e['role']}] {note}" if e["role"] else f"- [{who}] {note}")
         return "PANEL SCRATCHPAD (shared notes posted by members so far):\n" + "\n".join(lines)
 
     def to_markdown(self) -> str:
@@ -148,7 +155,10 @@ class Scratchpad:
             tmp = path.with_name(f"{path.name}.{self.dir.name}.tmp")
             tmp.write_text(json.dumps(payload), encoding="utf-8")
             tmp.replace(path)  # atomic: a poll must never read half a file
-        except OSError:
+        except Exception:
+            # Not just OSError. `json.dumps` raises TypeError on anything unserializable a
+            # future caller passes in `extra`, and that would kill a multi-minute run on the
+            # worker thread to lose one progress update.
             pass
 
     def save(self, transcript: str, result: dict[str, Any]) -> dict[str, str]:

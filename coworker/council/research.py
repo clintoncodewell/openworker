@@ -74,6 +74,11 @@ def fallback_query(question: str) -> str:
     first = re.split(r"(?<=[.?!])\s", (question or "").strip(), maxsplit=1)[0]
     words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'&+-]*", first)
     kept = [w for w in words if w.lower() not in _STOP]
+    if not words:
+        # A question with no ASCII words at all — Chinese, Japanese, Arabic. The stopword
+        # pass has nothing to work on, and returning "" means the council silently runs zero
+        # searches and then reports that the search found nothing. Send the opening clause.
+        return first[:MAX_QUERY_CHARS].strip()
     return " ".join((kept or words)[:12])
 
 

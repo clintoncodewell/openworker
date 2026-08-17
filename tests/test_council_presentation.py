@@ -330,3 +330,63 @@ def test_two_councils_do_not_write_the_same_temp_file(tmp_path):
     gets renamed into place — a valid-looking mixture of two runs."""
     a, b = Scratchpad("first question"), Scratchpad("second question")
     assert a.dir.name != b.dir.name
+
+
+def test_a_member_naming_another_model_is_scrubbed_for_the_chair():
+    """Members debate BY NAME — they are shown the real transcript and told to attack each
+    other's weakest claim, so they write "azure:gpt-5.6-sol's point is weak". Aliasing only
+    the labels leaves every one of those sentences intact, and the chair needs to read one
+    of them to work out which letter is itself."""
+    from coworker.council.core import scrub
+
+    alias = {"azure:gpt-5.6-sol": "Member A", "xai:grok-4.6": "Member B"}
+    text = "azure:gpt-5.6-sol overstates it, and grok-4.6 agrees with gpt-5.6-sol."
+    out = scrub(text, alias)
+    assert "gpt-5.6-sol" not in out and "grok-4.6" not in out
+    assert out.count("Member A") == 2 and "Member B" in out
+
+
+def test_scrubbing_does_not_mangle_a_longer_model_name():
+    """"gpt-5.6-sol" is a prefix of "gpt-5.6-sol-mini". Replacing the short one first turns
+    the long one into "Member A-mini"."""
+    from coworker.council.core import scrub
+
+    alias = {"a:gpt-5.6-sol": "Member A", "b:gpt-5.6-sol-mini": "Member B"}
+    assert scrub("b:gpt-5.6-sol-mini disagrees", alias) == "Member B disagrees"
+
+
+def test_a_scratchpad_note_naming_a_model_is_scrubbed_too():
+    pad = Scratchpad("q")
+    pad.post("a:one", "Advocate", "b:two is wrong about the queue", 1)
+    rendered = pad.render({"a:one": "Member A", "b:two": "Member B"})
+    assert "b:two" not in rendered and "Member B is wrong" in rendered
+
+
+def test_a_no_search_config_saved_as_a_string_still_means_no_search():
+    """"false" is a non-empty string and therefore truthy. Reading it before coercion made a
+    no-search config look like the default, and the default turns search back on."""
+    cfg = CouncilConfig.from_dict({"rounds": 2, "research": "false"})
+    assert cfg.research is False
+    assert cfg.limits()[2] is False
+
+
+def test_a_question_in_a_script_with_no_ascii_still_searches():
+    """The word regex is ASCII-only, so a pure-CJK question produced an empty query, zero
+    searches, and a report claiming the search found nothing."""
+    from coworker.council.research import fallback_query
+
+    assert fallback_query("2027年までに金融計画に最も大きな影響を与えるのは何ですか？").strip()
+
+
+def test_the_derived_option_lists_are_not_written_to_disk(tmp_path):
+    """They are generated from code. Persisting them means a stale copy of the shipped
+    options survives an upgrade in the one file that is meant to hold only choices."""
+    import json
+
+    from coworker.council.config import save_config
+
+    path = tmp_path / "council.json"
+    save_config(CouncilConfig(), path)
+    stored = json.loads(path.read_text())
+    assert "depths" not in stored and "details" not in stored
+    assert stored["depth"] == "standard"

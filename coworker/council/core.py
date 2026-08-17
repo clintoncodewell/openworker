@@ -187,6 +187,28 @@ def _alias(models: list[str]) -> dict[str, str]:
     return {m: f"Member {chr(65 + i)}" for i, m in enumerate(models)}
 
 
+def scrub(text: str, alias: dict[str, str]) -> str:
+    """Replace model ids inside a member's own words, not only in the labels around them.
+
+    Members debate BY NAME — they are shown the real transcript and asked to attack each
+    other's weakest claim, so they write "azure:gpt-5.6-sol's second point is weak". Aliasing
+    only the `--- Member A ---` headers leaves every one of those sentences intact, and the
+    chair needs to read exactly one of them to work out which letter is itself. That would
+    have left the anonymity looking right and doing nothing.
+    """
+    # Longest first: "gpt-5.6-sol" is a prefix of "gpt-5.6-sol-mini", and replacing the
+    # short one first would turn the long one into "Member A-mini".
+    for model in sorted(alias, key=len, reverse=True):
+        text = text.replace(model, alias[model])
+    for model in sorted(alias, key=len, reverse=True):
+        # The bare name too: a member that drops the vendor prefix would otherwise slip
+        # through. Short names are skipped — a three-character id would match real words.
+        bare = model.split(":", 1)[1] if ":" in model else ""
+        if len(bare) >= 5:
+            text = text.replace(bare, alias[model])
+    return text
+
+
 def _transcript(answers: list[dict[str, Any]], alias: Optional[dict[str, str]] = None) -> str:
     """The round as text. With `alias`, model names are replaced by Member A/B/C.
 
@@ -197,7 +219,8 @@ def _transcript(answers: list[dict[str, Any]], alias: Optional[dict[str, str]] =
     """
     return "\n\n".join(
         f"--- {(alias or {}).get(a['model'], a['model'])} "
-        f"(arguing: {a.get('role') or 'no assigned lens'}) ---\n{a['text']}"
+        f"(arguing: {a.get('role') or 'no assigned lens'}) ---\n"
+        f"{scrub(a['text'], alias) if alias else a['text']}"
         for a in answers
         if a.get("text")
     )
