@@ -1,0 +1,31 @@
+tests/test_council_presentation.py
+  s_3f16b4dbfd2cda::t_e94d12fc55f2fc 333-392
+coworker/council/scratchpad.py
+  s_3f16b4dbfd2cda::t_de87daa4e2ef45 108-115
+  s_3f16b4dbfd2cda::t_97715f53cc2dc5 158-161
+coworker/council/config.py
+  s_3f16b4dbfd2cda::t_4465c605a649b5 516-533,593
+coworker/council/core.py
+  s_3f16b4dbfd2cda::t_c1e6f3cbdb086a 222-223
+  s_3f16b4dbfd2cda::t_4edd620ba3e5a2 190-211
+surfaces/gui/src/components/Markdown.test.tsx
+  s_3f16b4dbfd2cda::t_65e3e12a749da4 39-74
+coworker/council/research.py
+  s_3f16b4dbfd2cda::t_97715f53cc2dc5 77-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "35cb92e9882b80148895e8d15fbc6b7319680c98",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
