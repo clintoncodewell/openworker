@@ -1,0 +1,42 @@
+coworker/council/core.py
+  s_3f16b4dbfd2cda::t_82df00ee0bf18d 479,482-483
+coworker/council/research.py
+  s_3f16b4dbfd2cda::t_82df00ee0bf18d 116,123-128,132,140,142,164
+  s_3f16b4dbfd2cda::t_aa02b600a109a7 137-139,146,148-149,158-159
+surfaces/gui/src/components/Composer.council.test.tsx
+  s_3f16b4dbfd2cda::t_f9c3b531d57251 91-124
+surfaces/gui/src/api.ts
+  s_3f16b4dbfd2cda::t_f26a0edfca31d2 1905-1924
+coworker/council/config.py
+  s_3f16b4dbfd2cda::t_c5ff423abb151e 53-54,62-63,65-66,72-73,75-77,81-83,439-452
+  s_3f16b4dbfd2cda::t_7f0bf1cfdcca73 453
+surfaces/gui/src/components/CouncilTab.tsx
+  s_3f16b4dbfd2cda::t_7e15598d5239d5 168-242
+  s_3f16b4dbfd2cda::t_18c8b6625ff1d3 15,17,21
+  s_3f16b4dbfd2cda::t_c348ad1626b51f 366
+tests/test_council_research.py
+  s_3f16b4dbfd2cda::t_b910d9fc24999a 273-303
+  s_3f16b4dbfd2cda::t_42fa8bce62d75e 220-272
+surfaces/gui/src/components/Composer.tsx
+  s_3f16b4dbfd2cda::t_978b955f081fc3 590,596-597,600-601
+coworker/server/manager.py
+  s_3f16b4dbfd2cda::t_e72e4e87448de7 1322,1326-1330
+surfaces/gui/src/styles.css
+  s_3f16b4dbfd2cda::t_4bc0a18b662138 492-507
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "20b4265025fec67101acd79bbdf526a0aeafc163",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
