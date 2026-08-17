@@ -41,8 +41,17 @@ hiddenimports = []
 datas = []
 binaries = []
 
+# `mcp.cli` is the MCP package's own command-line tool, which this sidecar never runs. It
+# calls sys.exit(1) at import time when its optional extras (typer) are absent — and
+# collect_submodules IMPORTS each submodule to walk it, so that exit takes the whole build
+# down from inside a module we ship no use for. It has to be skipped during the walk;
+# filtering the returned list is too late, because the import has already happened.
+def _wanted(name: str) -> bool:
+    return name != "mcp.cli" and not name.startswith("mcp.cli.")
+
+
 for pkg in ("coworker", "aisuite", "mcp", "ddgs", "croniter", "docstring_parser"):
-    hiddenimports += collect_submodules(pkg)
+    hiddenimports += collect_submodules(pkg, filter=_wanted)
 
 if not INCLUDE_EXPERIMENTAL:
     hiddenimports = [
