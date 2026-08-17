@@ -112,7 +112,13 @@ def extract(raw: Any) -> Optional[dict[str, int]]:
     output = _first_int(usage, "completion_tokens", "output_tokens", "candidates_token_count")
 
     gemini_thoughts = _first_int(usage, "thoughts_token_count")  # additive
-    details = getattr(usage, "completion_tokens_details", None)
+    # The Responses API nests the same breakdown under a different name. Reading only the
+    # chat/completions one reports zero thinking for every Responses turn — the tokens are
+    # still counted and still billed (they sit inside `output_tokens`), but the split that
+    # tells you WHY a turn was expensive silently disappears.
+    details = getattr(usage, "completion_tokens_details", None) or getattr(
+        usage, "output_tokens_details", None
+    )
     openai_reasoning = _first_int(details, "reasoning_tokens") if details is not None else 0
 
     output += gemini_thoughts  # NOT openai_reasoning — already inside `output`

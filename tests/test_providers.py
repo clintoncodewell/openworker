@@ -134,24 +134,28 @@ _EFFORT_400 = (
 
 
 def test_gpt56_tools_pin_reasoning_effort_none():
+    """Terra and Luna serve tools on chat/completions once effort is "none". Sol does not —
+    it is refused at every effort and takes the Responses path instead — so it is asserted
+    separately in tests/test_openai_responses.py rather than lumped in here."""
     client = _FakeClient(_response(content="x"))
     provider = OpenAIProvider(client=client)
     calls = client.chat.completions.calls
 
-    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
+    for model in ("gpt-5.6-terra", "gpt-5.6-luna"):
         provider.complete(model=model, messages=[], tools=_TOOLS)
-    assert [c["reasoning_effort"] for c in calls] == ["none"] * 3
+    assert [c["reasoning_effort"] for c in calls] == ["none"] * 2
 
     # an explicit caller choice is respected on the first attempt
     provider.complete(
-        model="gpt-5.6-sol", messages=[], tools=_TOOLS, reasoning_effort="low"
+        model="gpt-5.6-terra", messages=[], tools=_TOOLS, reasoning_effort="low"
     )
-    assert calls[3]["reasoning_effort"] == "low"
+    assert calls[2]["reasoning_effort"] == "low"
 
-    # no tools, or another model → the request is untouched
+    # no tools, or another model → the request is untouched. Sol with NO tools stays on
+    # chat/completions too: the endpoint only objects to the tools, not to the model.
     provider.complete(model="gpt-5.6-sol", messages=[])
     provider.complete(model="gpt-5.5", messages=[], tools=_TOOLS)
-    assert "reasoning_effort" not in calls[4] and "reasoning_effort" not in calls[5]
+    assert "reasoning_effort" not in calls[3] and "reasoning_effort" not in calls[4]
 
 
 class _EffortRejectingCompletions:

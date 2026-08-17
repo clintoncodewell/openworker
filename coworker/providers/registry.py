@@ -199,7 +199,11 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
             raise RuntimeError(
                 f"No {vendor} API key configured — add it in Settings ▸ Models."
             )
-        return OpenAIProvider(api_key=api_key, base_url=base_url)
+        return OpenAIProvider(
+            api_key=api_key,
+            base_url=base_url,
+            supports_responses=vendor == "Azure Foundry GPT",
+        )
 
     return build
 

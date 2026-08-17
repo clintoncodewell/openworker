@@ -1,13 +1,14 @@
 """OpenAI provider — the v1 model access implementation.
 
-Uses the OpenAI Python SDK `chat.completions` API only (no Responses/Assistants), so
-the later swap to aisuite (OpenAI-API-shaped) stays a near drop-in.
+Uses the OpenAI Python SDK, preferring `chat.completions` except for models whose
+tool calling is only available through Responses.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from .base import (
@@ -37,13 +38,60 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
     return None
 
 
-# GPT-5.6 (2026-07) defaults reasoning_effort to "medium" server-side, and
-# /v1/chat/completions rejects function tools combined with any effort other than
-# "none" ("use /v1/responses"). Until we grow a Responses API path, pin effort to
-# none whenever tools ride along on these models — and when the API rejects a call
-# with that exact complaint anyway (a future generation, an alias we didn't list),
-# retry once at effort none so the user gets a working turn instead of a 400.
+# Most GPT-5.6 deployments accept tools on chat/completions only at effort "none".
+# Sol is the exception: Azure rejects tools there even at "none", so it takes the
+# Responses path below while Terra/Luna keep the narrower compatibility workaround.
 _EFFORT_ERROR = "function tools with reasoning_effort are not supported"
+_RESPONSES_TOOL_MODELS = frozenset({"gpt-5.6-sol"})
+# The server names the endpoint in its own rejection ("Please use /v1/responses instead").
+# That is decisive and worth more than our allow-list, so it escalates on the first 400 and
+# a future alias recovers without being listed here. A 400 that complains about the effort
+# WITHOUT naming an endpoint is the older, narrower problem — Terra and Luna serve tools on
+# chat/completions once effort is "none" — and that one still earns its cheap retry.
+_RESPONSES_HINT = "/v1/responses"
+
+
+def _wants_responses(exc: Exception, kwargs: dict[str, Any]) -> bool:
+    """Should this rejection move the call to the Responses API?
+
+    Yes when the server named that endpoint, or when it has already refused the effort at
+    "none" and so has nothing cheaper left to offer. Escalating any earlier would push a
+    model that merely wanted effort="none" onto an endpoint its vendor may not implement.
+    """
+    msg = str(exc).lower()
+    if _EFFORT_ERROR not in msg:
+        return False
+    # Already refused at "none": nothing cheaper is left, whatever the wording said. This
+    # is the backstop that catches any phrasing the two clauses below did not anticipate.
+    if kwargs.get("reasoning_effort") == "none":
+        return True
+    # Otherwise take the server at its word. Sol says "Please use /v1/responses instead"
+    # and offers nothing else, so the endpoint is the problem. Other deployments say "use
+    # /v1/responses OR set reasoning_effort to 'none'" — that second clause is a cheaper
+    # way out on an endpoint their vendor definitely implements, so take it first.
+    return _RESPONSES_HINT in msg and "reasoning_effort to" not in msg
+
+
+def _responses_or_original(
+    exc: Exception,
+    client: Any,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]],
+    settings: dict[str, Any],
+) -> Any:
+    """Escalate to the Responses API, but keep the server's own complaint if that fails.
+
+    The escalation is a guess based on an error string, and it is attempted even for
+    endpoints not known to implement /v1/responses — a relay in front of Azure will forward
+    Azure's "use /v1/responses" verbatim while being perfectly capable of serving it. When
+    the guess is wrong the SDK raises a 404, and letting THAT surface would replace an
+    actionable message ("use /v1/responses") with one that explains nothing.
+    """
+    try:
+        return _complete_responses(client, model, messages, tools, settings)
+    except Exception:
+        raise exc from None
 
 
 def _pin_reasoning_effort(kwargs: dict[str, Any]) -> None:
@@ -81,8 +129,7 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
 
     Reasoning-routed OpenAI models reject `max_tokens` outright (they want
     `max_completion_tokens`) — but compat servers (Ollama's /v1) know ONLY
-    `max_tokens`, so the swap must happen on rejection, never up front. Same
-    contract as the reasoning_effort retry: fix exactly what the server named.
+    `max_tokens`, so the swap must happen on rejection, never up front.
     """
     msg = str(exc).lower()
     if _EFFORT_ERROR in msg and kwargs.get("reasoning_effort") != "none":
@@ -103,6 +150,7 @@ class OpenAIProvider(ProviderClient):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         secrets: Any = None,
+        supports_responses: Optional[bool] = None,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -117,7 +165,27 @@ class OpenAIProvider(ProviderClient):
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
+        # The stock OpenAI endpoint supports Responses. Custom endpoints opt in at
+        # construction because most OpenAI-compatible vendors implement chat only.
+        # OPT-IN, and defaulting to off is the point. The refusal that motivates the
+        # Responses path was measured on Azure Foundry; nobody has probed whether the same
+        # model name behaves the same way on api.openai.com, where it is also the DEFAULT
+        # model. A provider that has not been checked keeps the endpoint it has always used
+        # and, if it turns out to need the other one, recovers through the server's own 400
+        # at the cost of one round trip.
+        self._supports_responses = bool(supports_responses)
         self.default_model = default_model
+
+    def _responses_required(self, model: str, tools: Optional[list[dict[str, Any]]]) -> bool:
+        # Keep the proactive list exact: routing a merely OpenAI-shaped vendor to an
+        # endpoint it does not implement is worse than waiting for its explicit 400.
+        # Deliberately narrow. The refusal was measured on Azure Foundry; nobody has probed
+        # whether the same model name behaves the same way on api.openai.com, and it is that
+        # provider's DEFAULT model — so guessing there would change the main path on
+        # evidence we do not have. Stock OpenAI keeps the endpoint it has always used and,
+        # if it turns out to need the other one, recovers through the 400 below at the cost
+        # of one round trip.
+        return bool(tools and self._supports_responses and model in _RESPONSES_TOOL_MODELS)
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -144,6 +212,10 @@ class OpenAIProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ) -> AssistantTurn:
+        client = self._ensure_client()
+        if self._responses_required(model, tools):
+            return _complete_responses(client, model, messages, tools, settings)
+
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": _strip_foreign_sidecars(messages),
@@ -153,13 +225,20 @@ class OpenAIProvider(ProviderClient):
             kwargs["tools"] = tools
         _pin_reasoning_effort(kwargs)
 
-        client = self._ensure_client()
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
+        # One retry is enough: the only chat parameter rewrite left is max_tokens.
+        # Two fixes can both be needed, in sequence: effort first, then max_tokens. The
+        # `else` is what actually SENDS the twice-fixed request — without it the loop ends
+        # with `response` unassigned and the caller gets an UnboundLocalError instead of
+        # either the answer or the server's own 400.
         for _ in range(2):
             try:
                 response = client.chat.completions.create(**kwargs)
                 break
             except Exception as exc:
+                if tools and _wants_responses(exc, kwargs):
+                    return _responses_or_original(
+                        exc, client, model, messages, tools, settings
+                    )
                 kwargs = _param_fix_retry(kwargs, exc)
         else:
             response = client.chat.completions.create(**kwargs)
@@ -187,6 +266,11 @@ class OpenAIProvider(ProviderClient):
         tools: Optional[list[dict[str, Any]]] = None,
         **settings: Any,
     ):
+        client = self._ensure_client()
+        if self._responses_required(model, tools):
+            yield from _stream_responses(client, model, messages, tools, settings)
+            return
+
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": _strip_foreign_sidecars(messages),
@@ -196,19 +280,29 @@ class OpenAIProvider(ProviderClient):
         if tools:
             kwargs["tools"] = tools
         _pin_reasoning_effort(kwargs)
-        client = self._ensure_client()
-
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
 
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
+        # One retry is enough: the only chat parameter rewrite left is max_tokens.
+        # See `complete()`: the `else` sends the twice-fixed request, and without it
+        # `chunks` is unassigned when both fixes were needed.
         for _ in range(2):
             try:
                 chunks = client.chat.completions.create(**kwargs)
                 break
             except Exception as exc:
+                if tools and _wants_responses(exc, kwargs):
+                    try:
+                        stream = _stream_responses(client, model, messages, tools, settings)
+                        first = next(stream, None)
+                    except Exception:
+                        raise exc from None  # see _responses_or_original
+                    if first is not None:
+                        yield first
+                        yield from stream
+                    return
                 kwargs = _param_fix_retry(kwargs, exc)
         else:
             chunks = client.chat.completions.create(**kwargs)
@@ -269,8 +363,8 @@ class OpenAIProvider(ProviderClient):
 def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
     calls: list[ToolCall] = []
     for tc in raw_tool_calls or []:
-        function = tc.function
-        raw_args = getattr(function, "arguments", None)
+        function = getattr(tc, "function", None)
+        raw_args = getattr(function, "arguments", None) if function else getattr(tc, "arguments", None)
         try:
             arguments = json.loads(raw_args) if raw_args else {}
         except (TypeError, json.JSONDecodeError):
@@ -278,9 +372,264 @@ def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
             # can return a tool-error so the model corrects itself.
             arguments = {"_raw": raw_args}
         calls.append(
-            ToolCall(id=getattr(tc, "id", ""), name=function.name, arguments=arguments)
+            ToolCall(
+                id=getattr(tc, "call_id", None) or getattr(tc, "id", ""),
+                name=getattr(function, "name", None) or getattr(tc, "name", ""),
+                arguments=arguments,
+            )
         )
     return calls
+
+
+def _get(obj: Any, name: str, default: Any = None) -> Any:
+    return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
+
+
+def _responses_content(content: Any, *, assistant: bool = False) -> Any:
+    if isinstance(content, str):
+        return content
+    text_type = "output_text" if assistant else "input_text"
+    parts: list[dict[str, Any]] = []
+    for part in content or []:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind in ("text", "input_text", "output_text") and part.get("text"):
+            parts.append({"type": text_type, "text": part["text"]})
+        elif kind in ("image_url", "input_image") and not assistant:
+            image = part.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            if url:
+                parts.append({"type": "input_image", "image_url": url})
+        elif kind in ("file", "input_file") and not assistant:
+            file = part.get("file") or {}
+            data = file.get("file_data") or part.get("file_data")
+            if data:
+                item = {"type": "input_file", "file_data": data}
+                filename = file.get("filename") or part.get("filename")
+                if filename:
+                    item["filename"] = filename
+                parts.append(item)
+    return parts
+
+
+def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for message in _strip_foreign_sidecars(messages):
+        role = message.get("role")
+        content = message.get("content")
+        if role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": message.get("tool_call_id") or "",
+                    "output": content if isinstance(content, str) else json.dumps(content),
+                }
+            )
+            continue
+        converted = _responses_content(content, assistant=role == "assistant")
+        if converted:
+            items.append({"role": role, "content": converted})
+        if role == "assistant":
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                arguments = function.get("arguments") or "{}"
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call.get("id") or "",
+                        "name": function.get("name") or "",
+                        "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments),
+                    }
+                )
+    return items
+
+
+def _responses_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for tool in tools or []:
+        function = tool.get("function") or {}
+        item: dict[str, Any] = {
+            "type": "function",
+            "name": function.get("name") or "",
+            "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+        }
+        for key in ("description", "strict"):
+            if key in function:
+                item[key] = function[key]
+        converted.append(item)
+    return converted
+
+
+def _responses_kwargs(
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]],
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"model": model, "input": _responses_input(messages)}
+    converted_tools = _responses_tools(tools)
+    if converted_tools:
+        kwargs["tools"] = converted_tools
+    for key in ("temperature", "top_p", "parallel_tool_calls", "tool_choice"):
+        if key in settings:
+            kwargs[key] = settings[key]
+    max_tokens = settings.get("max_output_tokens")
+    if max_tokens is None:
+        max_tokens = settings.get("max_completion_tokens", settings.get("max_tokens"))
+    if max_tokens is not None:
+        kwargs["max_output_tokens"] = max_tokens
+    if "reasoning_effort" in settings:
+        kwargs["reasoning"] = {"effort": settings["reasoning_effort"]}
+    return kwargs
+
+
+def _responses_text(response: Any) -> Optional[str]:
+    direct = _get(response, "output_text")
+    if isinstance(direct, str) and direct:
+        return direct
+    parts: list[str] = []
+    for item in _get(response, "output", []) or []:
+        if _get(item, "type") != "message":
+            continue
+        for content in _get(item, "content", []) or []:
+            if _get(content, "type") in ("output_text", "text") and _get(content, "text"):
+                parts.append(str(_get(content, "text")))
+    return "".join(parts) or None
+
+
+def _responses_reasoning(response: Any) -> Optional[str]:
+    parts: list[str] = []
+    for item in _get(response, "output", []) or []:
+        if _get(item, "type") != "reasoning":
+            continue
+        for part in (_get(item, "summary", []) or []) + (_get(item, "content", []) or []):
+            if _get(part, "text"):
+                parts.append(str(_get(part, "text")))
+    return "".join(parts) or None
+
+
+def _responses_tool_calls(response: Any) -> list[ToolCall]:
+    return _parse_tool_calls(
+        item for item in (_get(response, "output", []) or []) if _get(item, "type") == "function_call"
+    )
+
+
+# Responses reports trouble in the BODY of a 200, where chat/completions would have raised.
+# Passing that through as an ordinary turn hands the agent loop an empty assistant message
+# and no reason for it, so a genuine failure reads as the model choosing to say nothing.
+_RESPONSES_TRUNCATED = "incomplete"
+
+
+def _responses_finish_reason(response: Any, tool_calls: list[ToolCall]) -> Optional[str]:
+    if tool_calls:
+        return "tool_calls"
+    status = _get(response, "status")
+    if status == "completed":
+        return "stop"
+    # Truncation is "incomplete" here and "length" on chat/completions. Report the name
+    # every existing consumer already checks for, rather than a second word for one thing.
+    if status == _RESPONSES_TRUNCATED:
+        return "length"
+    return status
+
+
+def _raise_if_failed(response: Any) -> None:
+    """A failed Responses call arrives as HTTP 200 with `status: "failed"`. Raise, so it
+    reaches the caller the same way a chat/completions failure would."""
+    if _get(response, "status") != "failed":
+        return
+    error = _get(response, "error")
+    detail = _get(error, "message") if error is not None else None
+    raise RuntimeError(f"the Responses API reported a failed generation: {detail or 'no detail given'}")
+
+
+def _complete_responses(
+    client: Any,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]],
+    settings: dict[str, Any],
+) -> AssistantTurn:
+    response = client.responses.create(**_responses_kwargs(model, messages, tools, settings))
+    _raise_if_failed(response)
+    tool_calls = _responses_tool_calls(response)
+    return AssistantTurn(
+        text=_responses_text(response),
+        tool_calls=tool_calls,
+        finish_reason=_responses_finish_reason(response, tool_calls),
+        raw=response,
+        reasoning=_responses_reasoning(response),
+    )
+
+
+def _stream_responses(
+    client: Any,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]],
+    settings: dict[str, Any],
+):
+    kwargs = _responses_kwargs(model, messages, tools, settings)
+    events = client.responses.create(**kwargs, stream=True)
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    calls: dict[int, dict[str, str]] = {}
+    final_response: Any = None
+    for event in events:
+        kind = _get(event, "type")
+        if kind == "response.output_text.delta" and _get(event, "delta"):
+            delta = str(_get(event, "delta"))
+            text_parts.append(delta)
+            yield StreamChunk(text_delta=delta)
+        elif kind in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta") and _get(event, "delta"):
+            delta = str(_get(event, "delta"))
+            reasoning_parts.append(delta)
+            yield StreamChunk(reasoning_delta=delta)
+        elif kind in ("response.output_item.added", "response.output_item.done"):
+            item = _get(event, "item")
+            if _get(item, "type") == "function_call":
+                index = int(_get(event, "output_index", 0) or 0)
+                calls[index] = {
+                    "id": str(_get(item, "call_id") or _get(item, "id") or ""),
+                    "name": str(_get(item, "name") or ""),
+                    "args": str(_get(item, "arguments") or calls.get(index, {}).get("args", "")),
+                }
+        elif kind == "response.function_call_arguments.delta":
+            index = int(_get(event, "output_index", 0) or 0)
+            calls.setdefault(index, {"id": "", "name": "", "args": ""})["args"] += str(
+                _get(event, "delta") or ""
+            )
+        elif kind == "response.completed":
+            final_response = _get(event, "response")
+
+    if final_response is not None:
+        final_text = _responses_text(final_response)
+        if not text_parts and final_text:
+            text_parts.append(final_text)
+            yield StreamChunk(text_delta=final_text)
+        if not reasoning_parts:
+            final_reasoning = _responses_reasoning(final_response)
+            if final_reasoning:
+                reasoning_parts.append(final_reasoning)
+        final_calls = _responses_tool_calls(final_response)
+    else:
+        final_calls = []
+    tool_calls = final_calls or _parse_tool_calls(
+        SimpleNamespace(
+            call_id=call["id"], name=call["name"], arguments=call["args"]
+        )
+        for _, call in sorted(calls.items())
+    )
+    yield StreamChunk(
+        turn=AssistantTurn(
+            text="".join(text_parts) or None,
+            tool_calls=tool_calls,
+            finish_reason=_responses_finish_reason(final_response, tool_calls),
+            raw=final_response,
+            reasoning="".join(reasoning_parts) or None,
+        )
+    )
 
 
 # Some OpenAI-compatible backends — notably Ollama for several local models (qwen, etc.) —
