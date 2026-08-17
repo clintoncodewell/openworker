@@ -1110,7 +1110,12 @@ export function App() {
     return res;
   };
   const sweepSessionsToArchive = async () => {
-    const activeWasSaved = sessions.some((s) => s.session_id === sessionId && !s.archived);
+    // Sweep skips pinned sessions, so "was unarchived" is not the same as "was swept".
+    // Without the pinned check a user whose active chat is pinned watches the transcript
+    // clear and a new session open, while the chat itself is still sitting right there.
+    const activeWasSaved = sessions.some(
+      (s) => s.session_id === sessionId && !s.archived && !s.pinned,
+    );
     const res = await archiveAllSessions();
     if (!res.ok) return;
     refreshSessions();

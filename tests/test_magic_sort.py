@@ -111,3 +111,63 @@ def test_apply_magic_sort_reuses_new_folder_and_skips_stale_target(tmp_path, mon
     assert manager.session_store.load("one").folder_id == folders[0]["id"]
     assert manager.session_store.load("two").folder_id == folders[0]["id"]
     assert manager.session_store.load("three").folder_id is None
+
+
+def test_propose_magic_sort_never_mutates_the_stores(tmp_path, monkeypatch):
+    """Preview-then-apply is the whole safety story: propose may read anything and
+    write nothing. Asserted here because a side-effecting refactor would otherwise
+    pass every other test in this file."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    provider = SortProvider(
+        json.dumps(
+            [
+                {"session_id": "one", "action": "new_folder", "folder_name": "Japan"},
+                {"session_id": "two", "action": "new_folder", "folder_name": "Japan"},
+            ]
+        )
+    )
+    manager = SessionManager(data_dir=tmp_path / "data", provider=provider)
+    for sid in ("one", "two"):
+        manager.session_store.save(_session(sid, tmp_path))
+    keep = manager.create_folder("Keep")["folder"]
+    manager.set_session_folder("one", keep["id"])
+
+    folders_before = manager.chat_folders.list()
+    assigned_before = {
+        record.session_id: record.folder_id for record in manager.session_store.list()
+    }
+
+    result = _run_inline(monkeypatch, manager)
+
+    assert result["ok"] is True and result["proposals"]
+    assert manager.chat_folders.list() == folders_before
+    assert {
+        record.session_id: record.folder_id for record in manager.session_store.list()
+    } == assigned_before
+
+
+def test_propose_magic_sort_drops_entries_naming_things_it_was_never_given(
+    tmp_path, monkeypatch
+):
+    """Titles reach the model as data and the model's reply is not trusted: an entry
+    for a session that was never sent, or for a folder/project that does not exist,
+    is dropped rather than surfacing a proposal the user could accept."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    provider = SortProvider(
+        json.dumps(
+            [
+                {"session_id": "one", "action": "existing_folder", "folder_id": "no-such-folder"},
+                {"session_id": "ghost", "action": "new_folder", "folder_name": "Injected"},
+                {"session_id": "archived-one", "action": "new_folder", "folder_name": "Injected"},
+                {"session_id": "one", "action": "project", "project_id": "no-such-project"},
+            ]
+        )
+    )
+    manager = SessionManager(data_dir=tmp_path / "data", provider=provider)
+    manager.session_store.save(_session("one", tmp_path))
+    manager.session_store.save(_session("archived-one", tmp_path, archived=True))
+
+    result = _run_inline(monkeypatch, manager)
+
+    assert result["ok"] is True
+    assert result["proposals"] == []
