@@ -35,11 +35,13 @@ from ..providers.registry import provider_configured, provider_descriptors
 from ..secrets import SecretStore
 from . import sources as sources_mod
 from . import usage as usage_mod
+from . import research as research_mod
 from .config import (
     ANTI_CONFORMITY,
     MAX_PANEL,
     MAX_ROUNDS,
     CouncilConfig,
+    confidence_label,
     load_config,
     render,
 )
@@ -142,16 +144,28 @@ def default_panel(secrets: SecretStore) -> list[str]:
     return panel[:MAX_PANEL]
 
 
-def _web_search(question: str, secrets: Optional[SecretStore]) -> dict[str, Any]:
-    """One shared web search. Never raises — the council runs fine without it."""
-    from ..web.tool import resolve_provider
+def panel_exclusions(secrets: Optional[SecretStore]) -> list[dict[str, str]]:
+    """Models a reader might expect on the panel that are not on it, and why.
 
-    try:
-        p = resolve_provider(secrets)
-        results = [r.to_dict() for r in p.search(question, max_results=6)]
-    except Exception as exc:
-        return {"ok": False, "error": f"{exc.__class__.__name__}: {exc}"}
-    return {"ok": True, "provider": getattr(p, "name", "?"), "results": results}
+    Only the surprising ones. An unconfigured provider is not news — there are a dozen of
+    them and the user never set them up. Ollama IS news when it is configured, because the
+    reason it is skipped is a design decision nobody would guess.
+    """
+    out: list[dict[str, str]] = []
+    if secrets is None:
+        return out
+    for d in provider_descriptors():
+        if d.name != "ollama" or not d.recommended_model:
+            continue
+        if provider_configured(d.name, secrets) and (secrets.get("provider:ollama") or {}):
+            out.append(
+                {
+                    "model": f"ollama:{d.recommended_model}",
+                    "reason": "local models are skipped — being installed says nothing about "
+                    "being up, and a dead one stalls the whole panel behind its timeout",
+                }
+            )
+    return out
 
 
 def _search_brief(research: dict[str, Any]) -> str:
@@ -167,9 +181,23 @@ def _search_brief(research: dict[str, Any]) -> str:
     )
 
 
-def _transcript(answers: list[dict[str, Any]]) -> str:
+def _alias(models: list[str]) -> dict[str, str]:
+    """model id → "Member A". Stable across rounds, so a member the chair meets in round 1
+    is the same letter in round 2."""
+    return {m: f"Member {chr(65 + i)}" for i, m in enumerate(models)}
+
+
+def _transcript(answers: list[dict[str, Any]], alias: Optional[dict[str, str]] = None) -> str:
+    """The round as text. With `alias`, model names are replaced by Member A/B/C.
+
+    The chair reads the aliased version. It is one of the panel models — sidelining a strong
+    model to keep the chair impartial costs more than the bias does — so the cheap fix is to
+    stop it recognising its own argument. It still sees every lens, which is what it has to
+    weigh; it just cannot tell which paragraph it wrote.
+    """
     return "\n\n".join(
-        f"--- {a['model']} (arguing: {a.get('role') or 'no assigned lens'}) ---\n{a['text']}"
+        f"--- {(alias or {}).get(a['model'], a['model'])} "
+        f"(arguing: {a.get('role') or 'no assigned lens'}) ---\n{a['text']}"
         for a in answers
         if a.get("text")
     )
@@ -239,7 +267,15 @@ def _ask(provider: Any, member: dict[str, str], system: str, user: str) -> dict[
         base["usage"] = usage
     if not text:
         return {**base, "error": "empty response"}
-    return {**base, "text": text, "stance": _stance(text), "confidence": _confidence(text)}
+    confidence = _confidence(text)
+    return {
+        **base,
+        "text": text,
+        "stance": _stance(text),
+        "confidence": confidence,
+        # The number is for the engine's agreement check; this is what a person reads.
+        "confidence_label": confidence_label(confidence),
+    }
 
 
 def _fan_out(
@@ -277,10 +313,91 @@ def _fan_out(
     ]
 
 
+def _report(
+    *,
+    members: list[dict[str, str]],
+    transcripts: list[list[dict[str, Any]]],
+    excluded: list[dict[str, str]],
+    research: dict[str, Any],
+    spend: dict[str, Any],
+    skipped_debate: bool,
+    stopped_on_budget: bool,
+) -> dict[str, Any]:
+    """What actually happened, in a shape a person can be shown.
+
+    A council that quietly runs five members instead of six looks identical to one that ran
+    six. That happened for real: the Mac could not see the Claude CLI, the panel convened
+    without it, and nothing anywhere said so. Absence is the failure mode this reports,
+    because it is the one nobody notices.
+    """
+    answered, failed, dropped = [], [], []
+    for member in members:
+        model = member["model"]
+        turns = [a for r in transcripts for a in r if a["model"] == model]
+        errors = [t.get("error") for t in turns if t.get("error")]
+        if any(t.get("text") for t in turns):
+            answered.append({"model": model, "role": member["role"]})
+            # A member that opens and then dies in the debate round still shaped the
+            # finding, but only with half a voice. Counting it as "answered" and saying
+            # nothing is the same silence this report exists to break.
+            if errors:
+                dropped.append({"model": model, "role": member["role"], "error": errors[0]})
+        else:
+            failed.append(
+                {"model": model, "role": member["role"], "error": errors[0] if errors else "no answer"}
+            )
+
+    notes = []
+    if failed:
+        notes.append(
+            f"{len(failed)} of {len(members)} members did not answer: "
+            + "; ".join(f"{f['model']} ({f['error']})" for f in failed)
+        )
+    if dropped:
+        notes.append(
+            "Answered the opening round, then dropped out of the debate: "
+            + "; ".join(f"{d['model']} ({d['error']})" for d in dropped)
+        )
+    for row in excluded:
+        notes.append(f"{row['model']} was left off the panel — {row['reason']}.")
+    if skipped_debate:
+        notes.append("The debate round was skipped: round 1 already agreed.")
+    if stopped_on_budget:
+        notes.append("Debate stopped early on the token guard.")
+    if research.get("skipped"):
+        notes.append("Web research was off for this run.")
+    elif not research.get("ok"):
+        notes.append(
+            "Web research returned nothing"
+            + (f" ({research['error']})" if research.get("error") else "")
+            + " — the panel argued from what the models already knew."
+        )
+
+    return {
+        "members_asked": len(members),
+        "members_answered": len(answered),
+        "answered": answered,
+        "failed": failed,
+        "dropped": dropped,
+        "excluded": excluded,
+        "rounds_run": len(transcripts),
+        "research": {
+            "ran": not research.get("skipped"),
+            "ok": bool(research.get("ok")),
+            "queries": research.get("queries") or [],
+            "result_count": len(research.get("results") or []),
+            "provider": research.get("provider", ""),
+        },
+        "spend": spend,
+        "notes": notes,
+    }
+
+
 def _public(rounds: list[list[dict[str, Any]]]) -> list[list[dict[str, Any]]]:
     """The rounds as returned to the caller — declared keys only, so an internal field
     added to a member result never leaks into the tool's contract by accident."""
-    keep = ("model", "role", "text", "error", "seconds", "stance", "confidence", "usage")
+    keep = ("model", "role", "text", "error", "seconds", "stance", "confidence",
+            "confidence_label", "usage")
     return [[{k: v for k, v in a.items() if k in keep} for a in r] for r in rounds]
 
 
@@ -306,8 +423,14 @@ def run_council(
             "error": "No models are configured, so there is no panel. Add a provider key "
             "in Settings ▸ Models first."
         }
-    n_rounds = max(1, min(int(rounds if rounds is not None else cfg.rounds), MAX_ROUNDS))
-    do_research = cfg.research if research is None else bool(research)
+    # The configured depth decides rounds, panel size and research together. An explicit
+    # argument still wins — the calling agent is allowed to say "one round, no search" for a
+    # question that does not need more.
+    depth_rounds, max_members, depth_research = cfg.limits()
+    n_rounds = max(1, min(int(rounds if rounds is not None else depth_rounds), MAX_ROUNDS))
+    do_research = depth_research if research is None else bool(research)
+    dropped_for_depth = models[max_members:]
+    models = models[:max_members]
 
     # Each member carries its model AND its lens, so a role survives into the transcript,
     # the scratchpad and the chair's view of who argued what.
@@ -317,13 +440,33 @@ def run_council(
         for i, m in enumerate(models)
     ]
 
+    pad = Scratchpad(question)
+    panel_public = [{"model": m["model"], "role": m["role"]} for m in members]
+    # Published at every stage so the GUI can show who is thinking. The council blocks for
+    # minutes and this file is the only thing it says while it does. Written BEFORE the
+    # slow work of each stage, not after — a status that appears once its stage is over
+    # describes a moment the reader never got to see.
+    pad.publish(
+        "researching" if do_research else "reading the sources",
+        panel=panel_public, round=1, rounds=n_rounds,
+    )
+
     resolved = sources_mod.resolve(cfg.sources, secrets)
     source_brief = sources_mod.brief(resolved)
-    found = _web_search(question, secrets) if do_research else {"ok": False, "skipped": True}
+    found = (
+        research_mod.search(
+            question, secrets=secrets, provider=provider, model=chair_model
+        )
+        if do_research
+        else {"ok": False, "skipped": True}
+    )
     evidence = "\n\n".join(p for p in (source_brief, _search_brief(found)) if p)
     opening = f"QUESTION: {question}" + (f"\n\n{evidence}" if evidence else "")
 
-    pad = Scratchpad(question)
+    pad.publish(
+        "round 1", panel=panel_public, round=1, rounds=n_rounds,
+        queries=found.get("queries") or [],
+    )
     transcripts: list[list[dict[str, Any]]] = []
 
     answers = _fan_out(
@@ -341,6 +484,14 @@ def run_council(
     )
     transcripts.append(answers)
     pad.collect(answers, 1)
+    pad.publish(
+        "round 1 done", panel=panel_public, round=1, rounds=n_rounds,
+        stances=[
+            {"model": a["model"], "role": a.get("role", ""), "stance": a.get("stance") or "",
+             "confidence": a.get("confidence_label") or "", "error": a.get("error") or ""}
+            for a in answers
+        ],
+    )
 
     skipped_debate = False
     stopped_on_budget = False
@@ -362,7 +513,7 @@ def run_council(
             if spent * 2 >= cfg.max_tokens_per_run:
                 stopped_on_budget = True
                 break
-        prior = _transcript(transcripts[-1])
+        prior = _transcript(transcripts[-1])  # members see real names; only the chair does not
         notes = pad.render()
         context = f"QUESTION: {question}\n\nPREVIOUS ROUND:\n{prior}" + (
             f"\n\n{notes}" if notes else ""
@@ -383,12 +534,26 @@ def run_council(
         )
         transcripts.append(answers)
         pad.collect(answers, round_no)
+        pad.publish(
+            f"round {round_no} done", panel=panel_public, round=round_no, rounds=n_rounds,
+            stances=[
+                {"model": a["model"], "role": a.get("role", ""), "stance": a.get("stance") or "",
+                 "confidence": a.get("confidence_label") or "", "error": a.get("error") or ""}
+                for a in answers
+            ],
+        )
         live = [m for m in live if any(a["model"] == m["model"] and a.get("text") for a in answers)]
 
     failures = [a for r in transcripts for a in r if a.get("error")]
+    excluded = panel_exclusions(secrets) + [
+        {"model": m, "reason": f"the panel is capped at {max_members} on {cfg.depth} depth"}
+        for m in dropped_for_depth
+    ]
     base = {
         "question": question,
         "preset": cfg.preset,
+        "depth": cfg.depth,
+        "detail": cfg.detail,
         "panel": [{"model": m["model"], "role": m["role"]} for m in members],
         "rounds": _public(transcripts),
         "sources": [
@@ -405,22 +570,43 @@ def run_council(
         # Every member failed. Asking the chair to summarise an empty transcript gets a
         # confidently invented consensus with no member behind it — worse than no answer,
         # because it reads exactly like a real one.
+        spend = usage_mod.total(transcripts)
+        # Publish "done" here too. Without it the GUI keeps showing a debate in progress for
+        # the run that failed hardest of all, which is the one a reader most needs told.
+        pad.publish("done", panel=panel_public, rounds=n_rounds, failed=True)
         return {
             **base,
-            "spend": usage_mod.total(transcripts),
+            "spend": spend,
+            "report": _report(
+                members=members,
+                transcripts=transcripts,
+                excluded=excluded,
+                research=found,
+                spend=spend,
+                skipped_debate=skipped_debate,
+                stopped_on_budget=stopped_on_budget,
+            ),
             "error": "Every panel member failed, so there is no consensus to report.",
         }
 
     full = "\n\n".join(
         f"=== ROUND {i + 1} ===\n{_transcript(r)}" for i, r in enumerate(transcripts)
     )
-    notes = pad.render()
-    roster = ", ".join(f"{m['model']} ({m['role']})" for m in members)
+    # The chair is one of the panel models. Rather than bench a strong model to keep the
+    # chair impartial, hide who said what: it weighs six arguments without knowing which one
+    # is its own. The saved transcript keeps the real names — that is for the reader.
+    alias = _alias([m["model"] for m in members])
+    chair_view = "\n\n".join(
+        f"=== ROUND {i + 1} ===\n{_transcript(r, alias)}" for i, r in enumerate(transcripts)
+    )
+    notes = pad.render(alias)
+    roster = ", ".join(f"{alias[m['model']]} ({m['role']})" for m in members)
     chair_context = (
-        f"QUESTION: {question}\n\nPANEL: {roster}\n\n{full}"
+        f"QUESTION: {question}\n\nPANEL: {roster}\n\n{chair_view}"
         + (f"\n\n{notes}" if notes else "")
         + (f"\n\n{evidence}" if evidence else "")
     )
+    pad.publish("the chair is writing the finding", panel=panel_public, rounds=n_rounds)
     # Through `_fan_out` (a one-member panel) so the chair is under the same deadline as
     # everyone else — called directly, a wedged chair hangs the tool call indefinitely.
     verdict = _fan_out(
@@ -442,9 +628,19 @@ def run_council(
         **base,
         "consensus": consensus or f"chair failed: {verdict.get('error')}",
         "spend": spend,
+        "report": _report(
+            members=members,
+            transcripts=transcripts,
+            excluded=excluded,
+            research=found,
+            spend=spend,
+            skipped_debate=skipped_debate,
+            stopped_on_budget=stopped_on_budget,
+        ),
     }
     if save:
         result["saved"] = pad.save(f"# Council transcript\n\n{full}\n", result)
+    pad.publish("done", panel=panel_public, rounds=n_rounds, report=result["report"])
     return result
 
 

@@ -10,6 +10,8 @@ const CONFIG: api.CouncilConfig = {
   preset: "analysis",
   rounds: 2,
   research: true,
+  depth: "standard",
+  detail: "standard",
   panel: [],
   chair_model: "",
   roles: [
@@ -34,6 +36,16 @@ const CONFIG: api.CouncilConfig = {
     { model: "xai:grok-4.5", role: "Skeptic" },
   ],
   resolved_chair: "azure:gpt-5.6-sol",
+  depths: {
+    quick: { rounds: 1, max_members: 3, research: false, label: "Quick", blurb: "Three models, once." },
+    standard: { rounds: 2, max_members: 6, research: true, label: "Standard", blurb: "Answer then rebut." },
+    deep: { rounds: 3, max_members: 8, research: true, label: "Deep", blurb: "Two rebuttal rounds." },
+  },
+  details: {
+    brief: { label: "Brief", blurb: "The answer and what it turns on.", instruction: "under 200 words" },
+    standard: { label: "Standard", blurb: "The answer and the reasoning.", instruction: "under 600 words" },
+    full: { label: "Full", blurb: "Everything.", instruction: "as much as justified" },
+  },
 };
 
 let saved: Partial<api.CouncilConfig>[];

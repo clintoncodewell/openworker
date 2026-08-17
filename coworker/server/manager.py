@@ -1524,13 +1524,21 @@ class SessionManager:
             "resolved_chair": cfg.chair_model or self.model,
         }
 
+    def council_live(self) -> dict[str, Any]:
+        """The running council's progress, or `{}`. Polled by the GUI a few times a minute
+        while a council is in flight — a council blocks for minutes and this is the only
+        thing it says while it works."""
+        from ..council.scratchpad import read_live
+
+        return read_live()
+
     def set_council_config(self, body: dict[str, Any]) -> dict[str, Any]:
         """Merge a partial edit into the stored config. Partial so the GUI can save one
         pane (prompts, say) without having to round-trip the sources it never showed."""
         from ..council import CouncilConfig, load_config, save_config
 
         current = load_config().to_dict()
-        for key in ("defaults", "default_roles"):  # derived, never stored
+        for key in ("defaults", "default_roles", "depths", "details"):  # derived, never stored
             current.pop(key, None)
         merged = {**current, **{k: v for k, v in (body or {}).items() if k in current}}
         # `prompts` is nested per preset, so a top-level replace loses the OTHER preset's

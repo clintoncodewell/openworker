@@ -1232,6 +1232,10 @@ def create_app(manager: SessionManager) -> FastAPI:
         # and a legible "that glob matched nothing".
         return await asyncio.to_thread(manager.test_council_source, body or {})
 
+    @app.get("/v1/council/live")
+    def council_live() -> dict[str, Any]:
+        return manager.council_live()
+
     @app.get("/v1/council/runs")
     def council_runs() -> list[dict[str, Any]]:
         return manager.council_runs()

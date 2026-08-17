@@ -1598,3 +1598,47 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
      fussy on a pill); small + high keeps the wordmark the star. */
   vertical-align: 3px;
 }
+
+/* -- council: the live debate in the right rail ------------------------------------- */
+.council-live { display: flex; flex-direction: column; gap: 10px; }
+.council-status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; font-weight: 600; color: var(--ink);
+}
+.council-round { font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
+.council-spinner {
+  width: 9px; height: 9px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--line); border-top-color: var(--accent);
+  animation: council-spin 900ms linear infinite;
+}
+/* A debate runs for minutes, so the one moving thing on screen has to be calm. Anyone who
+   asks for less motion gets a static dot rather than nothing — the panel still reads. */
+@keyframes council-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .council-spinner { animation: none; border-top-color: var(--line); background: var(--accent); }
+}
+.council-question {
+  font-size: 12px; line-height: 1.45; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.council-queries {
+  display: flex; gap: 6px; align-items: flex-start;
+  font-size: 11.5px; line-height: 1.4; color: var(--faint); overflow-wrap: anywhere;
+}
+.council-queries svg { flex: none; margin-top: 2px; }
+.council-members { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.council-members li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline;
+  font-size: 12px; line-height: 1.35;
+}
+.council-member-name { color: var(--ink); overflow-wrap: anywhere; }
+.council-member-role { color: var(--faint); margin-left: 6px; font-size: 11px; }
+.council-member-stance { color: var(--muted); text-align: right; overflow-wrap: anywhere; }
+.council-members li.is-waiting .council-member-stance { color: var(--faint); font-style: italic; }
+.council-members li.is-failed .council-member-name,
+.council-members li.is-failed .council-member-stance { color: var(--faint); }
+.council-notes { display: flex; flex-direction: column; gap: 6px; }
+.council-notes-head { font-size: 11px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.council-note { font-size: 12px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.council-note b { color: var(--ink); font-weight: 600; }
+.council-warn { font-size: 11.5px; line-height: 1.45; color: var(--warnInk, var(--muted)); overflow-wrap: anywhere; }

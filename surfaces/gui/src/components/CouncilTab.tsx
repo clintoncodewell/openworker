@@ -18,6 +18,7 @@ import {
   type CouncilSource,
 } from "../api";
 import { Icon } from "./Icon";
+import { Markdown } from "./Markdown";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const INPUT =
@@ -98,6 +99,123 @@ export function CouncilTab() {
   );
 }
 
+// -- how hard to think, and how much to write ------------------------------------
+// One control each, with the cost stated. Rounds and panel size move together because
+// picking them separately lets you choose a pair that makes no sense — three rounds of two
+// members — and because "how much compute do I want on this" is the question actually
+// being asked. Custom puts the raw fields back.
+
+function OptionCards<T extends string>({
+  label,
+  help,
+  value,
+  options,
+  onPick,
+  testid,
+}: {
+  label: string;
+  help?: string;
+  value: T;
+  options: { key: T; label: string; blurb: string }[];
+  onPick: (key: T) => void;
+  testid: string;
+}) {
+  return (
+    <div className="block">
+      <span className="text-[12.5px] font-medium text-ink">{label}</span>
+      <div className="mt-2 grid gap-2" data-testid={testid}>
+        {options.map((o) => {
+          const on = o.key === value;
+          return (
+            <button
+              key={o.key}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => onPick(o.key)}
+              className={
+                "text-left rounded-xl border px-3 py-2.5 transition-colors " +
+                (on
+                  ? "border-accent bg-accent/5"
+                  : "border-line hover:border-muted hover:bg-paper")
+              }
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={
+                    "w-3.5 h-3.5 rounded-full border grid place-items-center shrink-0 " +
+                    (on ? "border-accent" : "border-line")
+                  }
+                  aria-hidden
+                >
+                  {on && <span className="w-1.5 h-1.5 rounded-full bg-accent" />}
+                </span>
+                <span className="text-[12.5px] font-medium text-ink">{o.label}</span>
+              </div>
+              <div className="text-[12px] text-muted mt-1 leading-relaxed pl-[22px]">{o.blurb}</div>
+            </button>
+          );
+        })}
+      </div>
+      {help && <p className={HELP}>{help}</p>}
+    </div>
+  );
+}
+
+function DepthPicker({
+  cfg,
+  save,
+}: {
+  cfg: CouncilConfig;
+  save: (p: Partial<CouncilConfig>) => Promise<void>;
+}) {
+  const depths = cfg.depths || {};
+  return (
+    <OptionCards
+      label="How hard should it think?"
+      testid="depth-picker"
+      value={cfg.depth}
+      onPick={(depth) => save({ depth })}
+      options={[
+        ...Object.entries(depths).map(([key, d]) => ({
+          key,
+          label: d.label,
+          blurb: d.blurb,
+        })),
+        {
+          key: "custom",
+          label: "Custom",
+          blurb: "Set the rounds and the web search yourself.",
+        },
+      ]}
+    />
+  );
+}
+
+function DetailPicker({
+  cfg,
+  save,
+}: {
+  cfg: CouncilConfig;
+  save: (p: Partial<CouncilConfig>) => Promise<void>;
+}) {
+  const details = cfg.details || {};
+  return (
+    <OptionCards
+      label="How much of the finding do you want?"
+      help="Every length opens with the answer in two sentences, so you can stop reading there."
+      testid="detail-picker"
+      value={cfg.detail}
+      onPick={(detail) => save({ detail })}
+      options={Object.entries(details).map(([key, d]) => ({
+        key,
+        label: d.label,
+        blurb: d.blurb,
+      }))}
+    />
+  );
+}
+
 // -- panel -----------------------------------------------------------------------
 
 function PanelPane({
@@ -166,25 +284,33 @@ function PanelPane({
           </p>
         </label>
 
-        <label className="block">
-          <span className="text-[12.5px] font-medium text-ink">Rounds</span>
-          <select
-            aria-label="Rounds"
-            className={INPUT + " mt-1.5"}
-            value={String(cfg.rounds)}
-            onChange={(e) => save({ rounds: Number(e.target.value) })}
-          >
-            <option value="1">1 — independent answers only</option>
-            <option value="2">2 — one rebuttal round</option>
-            <option value="3">3 — two rebuttal rounds</option>
-          </select>
-        </label>
+        <DepthPicker cfg={cfg} save={save} />
+        <DetailPicker cfg={cfg} save={save} />
 
-        <Toggle
-          label="Search the web before the panel answers"
-          checked={cfg.research}
-          onChange={(v) => save({ research: v })}
-        />
+        {cfg.depth === "custom" && (
+          <>
+            <label className="block">
+              <span className="text-[12.5px] font-medium text-ink">Rounds</span>
+              <select
+                aria-label="Rounds"
+                className={INPUT + " mt-1.5"}
+                value={String(cfg.rounds)}
+                onChange={(e) => save({ rounds: Number(e.target.value) })}
+              >
+                <option value="1">1 — independent answers only</option>
+                <option value="2">2 — one rebuttal round</option>
+                <option value="3">3 — two rebuttal rounds</option>
+              </select>
+            </label>
+
+            <Toggle
+              label="Search the web before the panel answers"
+              checked={cfg.research}
+              onChange={(v) => save({ research: v })}
+            />
+          </>
+        )}
+
         <Toggle
           label="Skip the debate when the opening round already agrees"
           help="Saves a full round of paid calls when there is nothing to argue about."
@@ -674,9 +800,19 @@ function HistoryPane() {
               {Object.entries(files[r.id] || {}).map(([name, body]) => (
                 <details key={name} open={name === "finding.md"}>
                   <summary className="text-[12.5px] text-muted cursor-pointer">{name}</summary>
-                  <pre className="mt-2 text-[12px] leading-relaxed whitespace-pre-wrap break-words overflow-x-auto">
-                    {body}
-                  </pre>
+                  {/* The finding and the scratchpad are written as markdown and meant to be
+                      read — rendering them turns the sources into links you can actually
+                      click. The transcript keeps its `--- Member A ---` rules and code-ish
+                      shape, which markdown would mangle into headings. */}
+                  {name === "transcript.md" ? (
+                    <pre className="mt-2 text-[12px] leading-relaxed whitespace-pre-wrap break-words overflow-x-auto">
+                      {body}
+                    </pre>
+                  ) : (
+                    <div className="mt-2 text-[12px]">
+                      <Markdown text={body} />
+                    </div>
+                  )}
                 </details>
               ))}
             </div>

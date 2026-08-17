@@ -1832,10 +1832,30 @@ export type CouncilSource = {
   enabled: boolean;
 };
 
+export type CouncilDepth = { rounds: number; max_members: number; research: boolean; label: string; blurb: string };
+export type CouncilDetail = { label: string; blurb: string; instruction: string };
+
+/** What a council reports about itself while it runs, polled from /v1/council/live. */
+export type CouncilLive = {
+  run?: string;
+  question?: string;
+  status?: string;
+  updated?: number;
+  panel?: { model: string; role: string }[];
+  round?: number;
+  rounds?: number;
+  queries?: string[];
+  notes?: { model: string; role: string; note: string; round: string }[];
+  stances?: { model: string; role: string; stance: string; confidence: string; error: string }[];
+  report?: Record<string, any>;
+};
+
 export type CouncilConfig = {
   preset: string;
   rounds: number;
   research: boolean;
+  depth: string;
+  detail: string;
   panel: string[];
   chair_model: string;
   roles: { name: string; brief: string }[];
@@ -1850,6 +1870,8 @@ export type CouncilConfig = {
   source_kinds: string[];
   resolved_panel: { model: string; role: string }[];
   resolved_chair: string;
+  depths: Record<string, CouncilDepth>;
+  details: Record<string, CouncilDetail>;
 };
 
 export async function getCouncilConfig(): Promise<CouncilConfig> {
@@ -1877,6 +1899,12 @@ export async function testCouncilSource(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(source),
   });
+  return res.json();
+}
+
+/** Progress of the council running right now. `{}` when none is. */
+export async function getCouncilLive(): Promise<CouncilLive> {
+  const res = await fetch(`${httpBase()}/v1/council/live`);
   return res.json();
 }
 

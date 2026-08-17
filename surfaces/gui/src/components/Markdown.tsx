@@ -1,6 +1,7 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Icon } from "./Icon";
+import { openExternal } from "../tauri";
 
 // §34 (UX-016): the agent ends a deliverable turn with plain markdown —
 // [Title](artifact:relative/path) — and the renderer turns it into a chip that opens the
@@ -49,8 +50,23 @@ export function Markdown({ text }: { text: string }) {
               const title = Array.isArray(children) ? children.join("") : String(children ?? "");
               return <ArtifactChip path={href.slice("artifact:".length)} title={title} />;
             }
+            // `target="_blank"` opens a browser tab in the dev build and does nothing at all
+            // in the desktop webview, which has no window to open. So the click is handled:
+            // the opener plugin hands the URL to the real browser, and the fallback is the
+            // old behaviour. Without this, every source link in a council finding is dead
+            // in the shipped app.
             return (
-              <a href={href} {...props} target="_blank" rel="noreferrer">
+              <a
+                href={href}
+                {...props}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => {
+                  if (!href || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                  e.preventDefault();
+                  openExternal(href);
+                }}
+              >
                 {children}
               </a>
             );

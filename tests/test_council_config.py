@@ -8,7 +8,27 @@ import pytest
 
 from coworker.council import CouncilConfig, Source, load_config, save_config
 from coworker.council import sources as sources_mod
-from coworker.council.config import DEFAULT_ROLES, PRESETS
+from coworker.council.config import (
+    ANSWER_FIRST,
+    DEFAULT_DETAIL,
+    DEFAULT_ROLES,
+    DETAILS,
+    HOUSE_STYLE,
+    PRESETS,
+    render,
+)
+
+
+def chair_default(preset: str = "analysis", detail: str = DEFAULT_DETAIL) -> str:
+    """The shipped chair prompt as the model receives it. Unlike round1 and debate, the
+    chair text carries the house style and the detail level, so it is substituted before it
+    leaves `prompt()` — comparing against the raw template would only assert that we forgot."""
+    return render(
+        PRESETS[preset]["chair"],
+        house_style=HOUSE_STYLE,
+        detail=DETAILS[detail]["instruction"],
+        answer_first=ANSWER_FIRST,
+    )
 from coworker.council.scratchpad import Scratchpad, extract_note
 
 
@@ -18,7 +38,7 @@ from coworker.council.scratchpad import Scratchpad, extract_note
 def test_prompts_fall_back_to_the_shipped_default():
     cfg = CouncilConfig()
     assert cfg.prompt("round1") == PRESETS["analysis"]["round1"]
-    assert cfg.prompt("chair") == PRESETS["analysis"]["chair"]
+    assert cfg.prompt("chair") == chair_default()
 
 
 def test_an_override_replaces_only_that_prompt():
@@ -31,12 +51,12 @@ def test_an_override_replaces_only_that_prompt():
 
 def test_a_blank_override_is_treated_as_no_override():
     cfg = CouncilConfig(prompts={"analysis": {"chair": "   "}})
-    assert cfg.prompt("chair") == PRESETS["analysis"]["chair"]
+    assert cfg.prompt("chair") == chair_default()
 
 
 def test_overrides_are_per_preset():
     cfg = CouncilConfig(preset="decision", prompts={"analysis": {"chair": "MY CHAIR"}})
-    assert cfg.prompt("chair") == PRESETS["decision"]["chair"]
+    assert cfg.prompt("chair") == chair_default("decision")
 
 
 def test_roles_wrap_round_a_panel_larger_than_the_role_list():
@@ -437,7 +457,7 @@ def test_roles_that_are_all_junk_fall_back_to_the_defaults():
 @pytest.mark.parametrize("prompts", [[], "text", None, {"analysis": "not a dict"}])
 def test_prompts_of_the_wrong_shape_do_not_break_prompt_lookup(prompts):
     cfg = CouncilConfig.from_dict({"prompts": prompts})
-    assert cfg.prompt("chair") == PRESETS["analysis"]["chair"]
+    assert cfg.prompt("chair") == chair_default()
 
 
 def test_an_unknown_prompt_phase_or_preset_is_dropped():

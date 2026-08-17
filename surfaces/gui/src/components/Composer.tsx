@@ -107,9 +107,38 @@ interface Props {
   placeholder?: string;
 }
 
+// -- council mode ----------------------------------------------------------------------
+// Sending "Council: <question>" is what convenes the panel, so the toggle prepends exactly
+// that. No new plumbing through the send path, and the transcript shows the message the
+// user actually sent rather than a hidden flag they cannot see or edit.
+const COUNCIL_PREFIX = "Council:";
+
+function councilKey(resetKey?: string): string {
+  return `ocw.council.${resetKey || "default"}`;
+}
+
+function councilStored(resetKey?: string): boolean {
+  try {
+    return localStorage.getItem(councilKey(resetKey)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** The text as sent. Already-prefixed text is left alone — a user who types the word
+ *  themselves with the toggle on must not get "Council: Council: …". */
+export function withCouncil(text: string, on: boolean): string {
+  const trimmed = text.trim();
+  if (!on || !trimmed || trimmed.toLowerCase().startsWith(COUNCIL_PREFIX.toLowerCase())) {
+    return trimmed;
+  }
+  return `${COUNCIL_PREFIX} ${trimmed}`;
+}
+
 export function Composer(props: Props) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [council, setCouncil] = useState(() => councilStored(props.resetKey));
   const [dragging, setDragging] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [dictation, setDictation] = useState<DictationStatus | null>(null);
@@ -160,8 +189,20 @@ export function Composer(props: Props) {
   useEffect(() => {
     setText("");
     setAttachments([]);
+    setCouncil(councilStored(props.resetKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.resetKey]);
+
+  // Council mode is per CONVERSATION, and it survives a reload: a chat opened to work
+  // through one decision should still be a council chat tomorrow morning. Switching chats
+  // reads the new one's setting rather than carrying the old one across.
+  useEffect(() => {
+    try {
+      localStorage.setItem(councilKey(props.resetKey), council ? "1" : "0");
+    } catch {
+      // No storage — the toggle still works for this session.
+    }
+  }, [council, props.resetKey]);
 
   // Dictation is intentionally native-only: the browser/dev build remains a local server client
   // and never turns on the browser microphone or ships audio anywhere.
@@ -288,7 +329,9 @@ export function Composer(props: Props) {
   // Enter queues while a turn runs (the server parks it), ⌘/Ctrl+Enter steers the live turn,
   // and an armed schedule turns Enter into "schedule for <time>". The composer is never locked.
   const submit = (opts?: { steer?: boolean }) => {
-    const t = text.trim();
+    // Steering injects into a turn that is already running, so a council prefix there would
+    // convene a second panel mid-debate. Council mode applies to new messages only.
+    const t = withCouncil(text, council && !(opts?.steer && props.running));
     if ((!t && attachments.length === 0) || dictation?.recording || dictationBusy) return;
     // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
@@ -539,6 +582,24 @@ export function Composer(props: Props) {
               <span className="pill-label">Loading models…</span>
             </button>
           ))}
+
+          {/* Council mode. Left of the mic so the two "how this message is handled" controls
+              (which model, which panel) sit together, away from send. */}
+          {!dictation?.recording && (
+            <button
+              className={"pill chip" + (council ? " bg-accent text-white" : " text-muted")}
+              onClick={() => setCouncil((on) => !on)}
+              aria-pressed={council}
+              data-testid="council-toggle"
+              title={
+                council
+                  ? "Council is on: every message in this chat goes to the whole panel. Slower, and it spends every provider's credits."
+                  : "Council: put each message to every configured model, have them debate it, and get one finding back."
+              }
+            >
+              <span className="pill-label">Council</span>
+            </button>
+          )}
 
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
           {isTauri() && (

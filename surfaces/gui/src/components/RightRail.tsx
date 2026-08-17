@@ -10,10 +10,11 @@ import {
 } from "../api";
 import type { TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
+import { CouncilPanel, useCouncilLive } from "./CouncilPanel";
 import { Icon } from "./Icon";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
-type Panel = "progress" | "artifacts";
+type Panel = "progress" | "council" | "artifacts";
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -78,11 +79,24 @@ export function RightRail({
 }: Props) {
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     progress: true,
+    // Collapsed by default (owner call): the debate is a peek, not the deliverable. It
+    // opens itself once, below, the first time a council actually starts.
+    council: false,
     artifacts: true,
   });
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
   const [selected, setSelected] = useState<ArtifactInfo | null>(null);
   const [content, setContent] = useState<ArtifactContent | null>(null);
+  const live = useCouncilLive(active);
+  const debating = !!live && live.status !== "done";
+
+  // Open the section the first time a council starts, then leave it alone. Re-opening it on
+  // every poll would fight a user who just collapsed it mid-debate.
+  const wasDebating = useRef(false);
+  useEffect(() => {
+    if (debating && !wasDebating.current) setOpen((o) => ({ ...o, council: true }));
+    wasDebating.current = debating;
+  }, [debating]);
 
   const refreshArtifacts = () => getArtifacts(sessionId).then(setArtifacts).catch(() => setArtifacts([]));
 
@@ -165,6 +179,16 @@ export function RightRail({
           <RailSection title="Progress" open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
             <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
           </RailSection>
+
+          {!!live && (
+            <RailSection
+              title={live.status === "done" ? "Council" : "Council · debating"}
+              open={open.council}
+              onToggle={() => setOpen({ ...open, council: !open.council })}
+            >
+              <CouncilPanel live={live} />
+            </RailSection>
+          )}
 
           {showArtifacts && (
           <RailSection

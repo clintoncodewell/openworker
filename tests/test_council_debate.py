@@ -90,7 +90,14 @@ def test_the_chair_is_told_the_members_argued_assigned_lenses():
     chair_system = p.systems_for("chair")[0]
     chair_user = p.users_for("chair")[0]
     assert "DELIBERATELY one-sided" in chair_system
-    assert "a:one (Advocate)" in chair_user  # the roster, so it can attribute positions
+    # The roster reaches the chair ANONYMISED. It needs the lenses to weigh the positions;
+    # it must not have the model names, because the chair is itself a panel model and would
+    # otherwise be marking its own homework. The saved transcript keeps the real names.
+    assert "Member A (Advocate)" in chair_user and "Member B (Skeptic)" in chair_user
+    # Attribution comes from the labels, and those are what the engine controls. A member
+    # that names itself inside its own answer still leaks, which is why this is a bias
+    # reducer and not a guarantee.
+    assert "--- a:one" not in chair_user and "PANEL: a:one" not in chair_user
 
 
 # -- anti-conformity ------------------------------------------------------------------

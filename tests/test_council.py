@@ -251,7 +251,11 @@ def test_research_results_reach_every_member(monkeypatch):
         research=True,
     )
     assert out["research"]["provider"] == "fake"
-    assert all("SNIP" in prompt for _, prompt in p.calls)
+    # The first call plans the search queries and so precedes the search — it is the one
+    # call that legitimately carries no results. Every panel prompt after it must.
+    panel = [prompt for model, prompt in p.calls if model in ("a:one", "b:two")]
+    assert len(panel) == 2 and all("SNIP" in prompt for prompt in panel)
+    assert out["research"]["queries"]  # the planner ran and produced something searchable
 
 
 def test_consensus_is_labelled_untrusted():
