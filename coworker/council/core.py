@@ -476,9 +476,11 @@ def run_council(
 
     resolved = sources_mod.resolve(cfg.sources, secrets)
     source_brief = sources_mod.brief(resolved)
+    n_queries, n_results = cfg.research_limits()
     found = (
         research_mod.search(
-            question, secrets=secrets, provider=provider, model=chair_model
+            question, secrets=secrets, provider=provider, model=chair_model,
+            queries=n_queries, max_results=n_results,
         )
         if do_research
         else {"ok": False, "skipped": True}

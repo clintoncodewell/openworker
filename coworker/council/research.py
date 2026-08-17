@@ -113,28 +113,40 @@ def search(
     secrets: Any = None,
     provider: Any = None,
     model: str = "",
+    queries: int = MAX_QUERIES,
     max_results: int = MAX_RESULTS,
 ) -> dict[str, Any]:
     """Plan queries, run them, return deduplicated results. Never raises — the council runs
     fine without research, and a search outage must not cost the panel."""
     from ..web.tool import resolve_provider
 
-    queries = plan_queries(question, provider=provider, model=model)
+    # Ask for enough per query to fill the budget even if one query returns little, but
+    # never so many that a single lucky query crowds out the other angles.
+    n_queries = max(1, int(queries or MAX_QUERIES))
+    max_results = max(1, int(max_results or MAX_RESULTS))
+    per_query = max(3, -(-max_results // n_queries) + 2)
+    planned = plan_queries(question, provider=provider, model=model, n=n_queries)
     try:
         engine = resolve_provider(secrets)
     except Exception as exc:
-        return {"ok": False, "queries": queries, "error": f"{exc.__class__.__name__}: {exc}"}
+        return {"ok": False, "queries": planned, "error": f"{exc.__class__.__name__}: {exc}"}
 
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
     errors: list[str] = []
-    for query in queries:
+    # Every angle gets its turn before the budget is spent. Breaking out as soon as the
+    # total is reached lets one productive query fill the whole brief and silences the
+    # other angles entirely, which is the opposite of why several are planned.
+    for query in planned:
         try:
-            hits = engine.search(query, max_results=RESULTS_PER_QUERY)
+            hits = engine.search(query, max_results=per_query)
         except Exception as exc:
             errors.append(f"{query}: {exc.__class__.__name__}")
             continue
+        taken = 0
         for hit in hits:
+            if taken >= per_query:
+                break
             row = hit.to_dict()
             url = (row.get("url") or "").strip()
             # Dedupe on URL: overlapping queries are the point, duplicate rows are not.
@@ -143,15 +155,13 @@ def search(
             seen.add(url)
             row["query"] = query  # which angle found it — shown in the sources panel
             results.append(row)
-            if len(results) >= max_results:
-                break
-        if len(results) >= max_results:
-            break
+            taken += 1
+    results = results[:max_results]
 
     out: dict[str, Any] = {
         "ok": bool(results),
         "provider": getattr(engine, "name", "?"),
-        "queries": queries,
+        "queries": planned,
         "results": results,
     }
     if errors:

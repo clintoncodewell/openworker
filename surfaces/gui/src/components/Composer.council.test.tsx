@@ -88,3 +88,37 @@ describe("Composer council toggle", () => {
     expect(onSteer).toHaveBeenCalledWith("focus on cost", []);
   });
 });
+
+describe("Composer council toggle — the on state is actually visible", () => {
+  it("changes its label and carries a class the stylesheet can win with", () => {
+    // The first version used Tailwind's `bg-accent`, which loses to `.pill.chip` on
+    // specificity. The button rendered identically in both states and the only way to
+    // find out was to send a message.
+    render(<Composer {...props()} />);
+    const btn = screen.getByTestId("council-toggle");
+    expect(btn.className).not.toContain("is-on");
+    expect(btn.textContent).toBe("Council");
+
+    fireEvent.click(btn);
+    expect(btn.className).toContain("is-on");
+    expect(btn.textContent).toBe("Council on");
+  });
+
+  it("says which way the click goes, in the tooltip", () => {
+    render(<Composer {...props()} />);
+    const btn = screen.getByTestId("council-toggle");
+    expect(btn.getAttribute("title")).toContain("Click to turn on");
+    fireEvent.click(btn);
+    expect(btn.getAttribute("title")).toContain("Click to turn off");
+  });
+
+  it("does not rely on colour alone to show state", () => {
+    render(<Composer {...props()} />);
+    const btn = screen.getByTestId("council-toggle");
+    // A dot for sighted users in greyscale, aria-pressed for a screen reader.
+    expect(btn.querySelector(".pill-dot")).toBeTruthy();
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(btn);
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+});

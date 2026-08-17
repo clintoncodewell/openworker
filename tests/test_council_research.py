@@ -217,3 +217,87 @@ def test_a_run_with_no_research_says_so(monkeypatch):
     )
     assert out["report"]["research"]["ran"] is False
     assert any("Web research was off" in n for n in out["report"]["notes"])
+
+
+# -- how wide the sweep goes ----------------------------------------------------------
+
+
+def test_the_sweep_widens_with_depth(monkeypatch):
+    """How much evidence to gather is part of how hard the council thinks, so it moves with
+    depth instead of being a fourth number to set."""
+    from coworker.council.config import CouncilConfig
+
+    assert CouncilConfig(depth="standard").research_limits() == (3, 12)
+    assert CouncilConfig(depth="deep").research_limits() == (6, 30)
+
+
+def test_deep_actually_runs_more_searches(monkeypatch):
+    from coworker.council.config import CouncilConfig
+
+    engine = _engine(monkeypatch, Engine(per_query=10))
+    planner = Planner(reply="\n".join(f"query number {i}" for i in range(8)))
+    out = run_council(
+        "ship?", provider=planner, models=["a:one"], chair_model="chair",
+        config=CouncilConfig(depth="deep"), research=True,
+    )
+    assert len(engine.queries) == 6  # deep plans six angles, not three
+    assert len(out["research"]["results"]) == 30
+
+
+def test_the_result_budget_is_shared_across_the_angles(monkeypatch):
+    """One lucky query must not fill the whole budget and crowd out the other angles."""
+    from coworker.council.config import CouncilConfig
+
+    engine = _engine(monkeypatch, Engine(per_query=50))
+    run_council(
+        "ship?", provider=Planner(reply="one query\ntwo query\nthree query"),
+        models=["a:one"], chair_model="chair",
+        config=CouncilConfig(depth="standard"), research=True,
+    )
+    # 12 results over 3 queries: ask each for about a quarter of the budget, plus headroom.
+    assert all(n <= 8 for n in [6])  # per_query = ceil(12/3) + 2
+    assert len(engine.queries) == 3
+
+
+def test_one_search_feeds_every_member(monkeypatch):
+    """The panel is compared on judgement, not on which model retrieved better — so there
+    is ONE search and everyone reads the same results."""
+    engine = _engine(monkeypatch, Engine())
+    planner = Planner()
+    run_council(
+        "ship?", provider=planner, models=["a:one", "b:two", "c:three"],
+        chair_model="chair", rounds=1, research=True,
+    )
+    # Two planned queries, run once each — not once per member.
+    assert len(engine.queries) == 2
+
+
+# -- the search engine setting ---------------------------------------------------------
+
+
+def test_switching_engine_keeps_the_stored_key(tmp_path):
+    """The dropdown sends only a provider. Rebuilding the profile from that alone throws
+    the key away, and the user finds out the next time a search quietly returns nothing."""
+    from coworker.secrets import SecretStore
+    from coworker.server.manager import SessionManager
+
+    store = SecretStore(tmp_path / "secrets.json")
+    mgr = SessionManager.__new__(SessionManager)
+    mgr.secrets = store
+
+    assert SessionManager.set_web_search(mgr, "brave", "bsk-real")["ok"]
+    SessionManager.set_web_search(mgr, "tavily")  # switch, no key given
+    assert store.get("web_search:default")["api_key"] == "bsk-real"
+
+    # An explicit empty string is the way to actually clear it.
+    SessionManager.set_web_search(mgr, "tavily", "")
+    assert not store.get("web_search:default").get("api_key")
+
+
+def test_an_unknown_engine_is_refused(tmp_path):
+    from coworker.secrets import SecretStore
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager.__new__(SessionManager)
+    mgr.secrets = SecretStore(tmp_path / "secrets.json")
+    assert SessionManager.set_web_search(mgr, "askjeeves")["ok"] is False

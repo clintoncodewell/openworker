@@ -1902,6 +1902,26 @@ export async function testCouncilSource(
   return res.json();
 }
 
+export type WebSearchSettings = { provider: string; has_key: boolean; providers: string[] };
+
+export async function getWebSearch(): Promise<WebSearchSettings> {
+  const res = await fetch(`${httpBase()}/v1/web-search`);
+  return res.json();
+}
+
+/** Omit `api_key` to keep the stored one; pass "" to clear it. */
+export async function setWebSearch(
+  provider: string,
+  api_key?: string,
+): Promise<{ ok: boolean; provider?: string; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/web-search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(api_key === undefined ? { provider } : { provider, api_key }),
+  });
+  return res.json();
+}
+
 /** Progress of the council running right now. `{}` when none is. */
 export async function getCouncilLive(): Promise<CouncilLive> {
   const res = await fetch(`${httpBase()}/v1/council/live`);

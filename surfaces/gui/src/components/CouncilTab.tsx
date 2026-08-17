@@ -12,10 +12,13 @@ import {
   getCouncilConfig,
   getCouncilRun,
   getCouncilRuns,
+  getWebSearch,
   setCouncilConfig,
+  setWebSearch,
   testCouncilSource,
   type CouncilConfig,
   type CouncilSource,
+  type WebSearchSettings,
 } from "../api";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
@@ -162,6 +165,81 @@ function OptionCards<T extends string>({
   );
 }
 
+// Which engine the panel searches with. It lives here rather than in a settings drawer
+// nobody opens, because the council is where search quality actually shows: the free engine
+// answers a long question with whatever matched the commonest words in it.
+const ENGINE_NOTE: Record<string, string> = {
+  duckduckgo: "Free and keyless. Fine for a well-aimed query, thin on anything specialist.",
+  brave: "An independent index with a free tier. The best default once you have a key.",
+  tavily: "Built for retrieval rather than browsing — cleaner extracts, needs a key.",
+};
+
+function SearchEngine() {
+  const [state, setState] = useState<WebSearchSettings | null>(null);
+  const [key, setKey] = useState("");
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    getWebSearch().then(setState).catch(() => {});
+  }, []);
+
+  if (!state) return null;
+  const needsKey = state.provider !== "duckduckgo";
+
+  const apply = async (provider: string, api_key?: string) => {
+    const res = await setWebSearch(provider, api_key);
+    if (!res.ok) return setStatus(res.error || "could not save that");
+    setKey("");
+    setStatus(api_key ? "Key saved" : "");
+    setState(await getWebSearch());
+    window.setTimeout(() => setStatus(""), 2200);
+  };
+
+  return (
+    <div className="block">
+      <span className="text-[12.5px] font-medium text-ink">Where the panel searches</span>
+      <select
+        aria-label="Search engine"
+        className={INPUT + " mt-2"}
+        value={state.provider}
+        onChange={(e) => apply(e.target.value)}
+      >
+        {state.providers.map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+      </select>
+      <p className={HELP}>{ENGINE_NOTE[state.provider] || "Needs an API key."}</p>
+
+      {needsKey && (
+        <div className="flex gap-2 mt-2">
+          <input
+            className={INPUT}
+            type="password"
+            aria-label={`${state.provider} API key`}
+            placeholder={state.has_key ? "A key is saved — type a new one to replace it" : "Paste the API key"}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+          />
+          <button
+            className={BTN_ACCENT}
+            disabled={!key.trim()}
+            onClick={() => apply(state.provider, key.trim())}
+          >
+            Save key
+          </button>
+        </div>
+      )}
+      {(status || (needsKey && !state.has_key)) && (
+        <p className={HELP} role="status">
+          {status || "No key stored yet, so searches will fail until you add one."}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function DepthPicker({
   cfg,
   save,
@@ -285,6 +363,7 @@ function PanelPane({
         </label>
 
         <DepthPicker cfg={cfg} save={save} />
+        <SearchEngine />
         <DetailPicker cfg={cfg} save={save} />
 
         {cfg.depth === "custom" && (

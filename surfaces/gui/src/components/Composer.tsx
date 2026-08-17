@@ -587,17 +587,18 @@ export function Composer(props: Props) {
               (which model, which panel) sit together, away from send. */}
           {!dictation?.recording && (
             <button
-              className={"pill chip" + (council ? " bg-accent text-white" : " text-muted")}
+              className={"pill chip" + (council ? " is-on" : "")}
               onClick={() => setCouncil((on) => !on)}
               aria-pressed={council}
               data-testid="council-toggle"
               title={
                 council
-                  ? "Council is on: every message in this chat goes to the whole panel. Slower, and it spends every provider's credits."
-                  : "Council: put each message to every configured model, have them debate it, and get one finding back."
+                  ? "Council is on: every message in this chat goes to the whole panel. Slower, and it spends every provider's credits. Click to turn off."
+                  : "Council: put each message to every configured model, have them debate it, and get one finding back. Click to turn on."
               }
             >
-              <span className="pill-label">Council</span>
+              <span className="pill-dot" aria-hidden />
+              <span className="pill-label">{council ? "Council on" : "Council"}</span>
             </button>
           )}
 

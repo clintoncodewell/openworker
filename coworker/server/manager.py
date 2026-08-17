@@ -1319,9 +1319,15 @@ class SessionManager:
 
         if provider not in provider_names():
             return {"ok": False, "error": f"unknown provider: {provider}"}
+        stored = self.secrets.get("web_search:default") or {}
         profile: dict[str, Any] = {"provider": provider}
         if api_key:
             profile["api_key"] = api_key
+        elif api_key is None and stored.get("api_key"):
+            # No key supplied means "leave it alone" — switching the engine in a dropdown
+            # must not silently throw away the key, which the user would only discover the
+            # next time a search quietly returned nothing. An explicit "" still clears it.
+            profile["api_key"] = stored["api_key"]
         self.secrets.put("web_search:default", profile)
         return {"ok": True, "provider": provider}
 

@@ -50,6 +50,8 @@ DEPTHS: dict[str, dict[str, Any]] = {
         "rounds": 1,
         "max_members": 3,
         "research": False,
+        "queries": 0,
+        "results": 0,
         "label": "Quick",
         "blurb": "Three models answer once. No debate, no web search. Seconds, and about a cent.",
     },
@@ -57,20 +59,28 @@ DEPTHS: dict[str, dict[str, Any]] = {
         "rounds": 2,
         "max_members": 6,
         "research": True,
+        "queries": 3,
+        "results": 12,
         "label": "Standard",
-        "blurb": "Up to six models answer, then rebut once, with web research. A minute or "
-        "two, and usually a few cents.",
+        "blurb": "Up to six models answer, then rebut once. Three searches, twelve sources. "
+        "A minute or two, and usually a few cents.",
     },
     "deep": {
         "rounds": 3,
         "max_members": MAX_PANEL,
         "research": True,
+        "queries": 6,
+        "results": 30,
         "label": "Deep",
-        "blurb": "Every configured model, two rebuttal rounds, wider research. Several "
-        "minutes, and several times the cost — for a decision worth it.",
+        "blurb": "Every configured model, two rebuttal rounds, and a real literature sweep: "
+        "six searches, thirty sources. Several minutes, and several times the cost — for a "
+        "decision worth it.",
     },
 }
 DEFAULT_DEPTH = "standard"
+# Used by "custom" depth, which has no preset to read these from.
+DEFAULT_QUERIES = 3
+DEFAULT_RESULTS = 12
 
 # -- how much of the finding to write --------------------------------------------------
 # Appended to the chair prompt. Every level leads with ANSWER, so the reader gets the
@@ -425,6 +435,21 @@ class CouncilConfig:
         if not preset:
             return (self.rounds, MAX_PANEL, self.research)
         return (int(preset["rounds"]), int(preset["max_members"]), bool(preset["research"]))
+
+    def research_limits(self) -> tuple[int, int]:
+        """(queries, results) for the configured depth.
+
+        How wide the sweep goes is part of how hard the council thinks, so it moves with
+        depth rather than being a fourth number to set. The results are shared: one search
+        feeds every member, because the panel is meant to be compared on judgement, not on
+        which model happened to retrieve better. Every extra source is re-sent to every
+        member in every round, which is why depth pays for the wide sweep and Standard
+        does not.
+        """
+        preset = DEPTHS.get(self.depth)
+        if not preset:
+            return (DEFAULT_QUERIES, DEFAULT_RESULTS)
+        return (int(preset["queries"]), int(preset["results"]))
 
     def role_for(self, index: int) -> dict[str, str]:
         """The lens for panel member `index`, wrapping round the role list."""
