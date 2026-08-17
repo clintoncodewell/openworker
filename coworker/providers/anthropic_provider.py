@@ -31,6 +31,7 @@ from .base import (
     ToolCall,
 )
 from .capabilities import capabilities_for
+from .usage import capture_headers
 
 # Required by the Messages API; a ceiling, not a spend target.
 DEFAULT_MAX_TOKENS = 16000
@@ -348,6 +349,7 @@ class AnthropicProvider(ProviderClient):
         secrets: Any = None,
         thinking_budget: Optional[int] = None,
         base_url: Optional[str] = None,
+        usage_provider_id: Optional[str] = "anthropic",
     ):
         # Mirrors OpenAIProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
@@ -359,8 +361,24 @@ class AnthropicProvider(ProviderClient):
         # Optional Anthropic-compatible endpoint (e.g. Z AI's /api/anthropic). None → the SDK
         # default (api.anthropic.com).
         self._base_url = base_url
+        self._usage_provider_id = usage_provider_id
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
+
+    def _create(self, resource: Any, **kwargs: Any) -> Any:
+        """Use the SDK raw response when available, retaining rate-limit headers."""
+        raw_resource = getattr(resource, "with_raw_response", None)
+        if raw_resource is not None:
+            raw = raw_resource.create(**kwargs)
+            capture_headers(self._usage_provider_id, getattr(raw, "headers", None))
+            return raw.parse()
+        response = resource.create(**kwargs)
+        capture_headers(
+            self._usage_provider_id,
+            getattr(response, "response_headers", None)
+            or getattr(getattr(response, "_response", None), "headers", None),
+        )
+        return response
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -431,13 +449,14 @@ class AnthropicProvider(ProviderClient):
         )
         client = self._ensure_client()
         if _needs_refusal_fallback(model):
-            response = client.beta.messages.create(
+            response = self._create(
+                client.beta.messages,
                 **kwargs,
                 betas=[_FALLBACK_BETA],
                 fallbacks=[{"model": _FALLBACK_MODEL}],
             )
         else:
-            response = client.messages.create(**kwargs)
+            response = self._create(client.messages, **kwargs)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -497,13 +516,14 @@ class AnthropicProvider(ProviderClient):
         kwargs["stream"] = True
         client = self._ensure_client()
         if _needs_refusal_fallback(model):
-            events = client.beta.messages.create(
+            events = self._create(
+                client.beta.messages,
                 **kwargs,
                 betas=[_FALLBACK_BETA],
                 fallbacks=[{"model": _FALLBACK_MODEL}],
             )
         else:
-            events = client.messages.create(**kwargs)
+            events = self._create(client.messages, **kwargs)
 
         text_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}

@@ -51,6 +51,10 @@ const baseProps = {
   onDeleteSession: vi.fn(),
   onArchiveSession: vi.fn(),
   onTogglePin: vi.fn(),
+  onSetSessionFolder: vi.fn(),
+  onApplyMagicSort: vi.fn(async () => ({ ok: true, moved: 0 })),
+  onArchiveAllSessions: vi.fn(),
+  onDeleteFolder: vi.fn(async () => true),
   onManage: vi.fn(),
   onOpenPersona: vi.fn(),
   onManagePersonas: vi.fn(),
@@ -106,6 +110,207 @@ describe("Sidebar group/filter control", () => {
     fireEvent.click(opsHeader);
     expect(screen.getByText("incident watch")).toBeTruthy();
     expect(screen.queryByTitle("About the Ops persona")).toBeNull();
+  });
+
+  it("offers Folder grouping and renders named folders followed by Unfiled", async () => {
+    const calls = stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+      {
+        match: "/v1/folders",
+        method: "GET",
+        json: { folders: [{ id: "work", name: "Work", created: "2026-08-17T00:00:00Z" }] },
+      },
+      { match: "/v1/settings/nav-layout", method: "POST", json: { ok: true, nav_layout: "folder" } },
+    ]);
+    const sessions = [
+      { ...SESSIONS[0], folder_id: "work" },
+      SESSIONS[1],
+    ];
+    render(<Sidebar {...baseProps} sessions={sessions} />);
+
+    fireEvent.click(await screen.findByLabelText("Group and filter conversations"));
+    fireEvent.click(await screen.findByText("Folder"));
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.body?.nav_layout === "folder")).toBe(true),
+    );
+    expect(await screen.findByTestId("folder-layout")).toBeTruthy();
+    expect(screen.getByText("Work")).toBeTruthy();
+    expect(screen.getByText("incident watch")).toBeTruthy();
+    const unfiled = screen.getByTestId("folder-unfiled");
+    expect(within(unfiled).getByText("hi there")).toBeTruthy();
+    expect(unfiled.parentElement?.lastElementChild).toBe(unfiled);
+  });
+
+  it("keeps sessions with a deleted folder reference under Unfiled", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "folder" } },
+      {
+        match: "/v1/folders",
+        method: "GET",
+        json: { folders: [{ id: "work", name: "Work", created: "2026-08-17T00:00:00Z" }] },
+      },
+    ]);
+    render(<Sidebar {...baseProps} sessions={[{ ...SESSIONS[0], folder_id: "deleted-folder" }]} />);
+
+    const unfiled = await screen.findByTestId("folder-unfiled");
+    expect(within(unfiled).getByText("incident watch")).toBeTruthy();
+  });
+});
+
+describe("Magic sort preview", () => {
+  it("previews proposed moves, lets one row opt out, then applies the rest", async () => {
+    const onApplyMagicSort = vi.fn(async (_proposals: unknown[]) => ({
+      ok: true,
+      moved: 1,
+      folders_created: 1,
+    }));
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+      { match: "/v1/folders", method: "GET", json: { folders: [] } },
+      {
+        match: "/v1/magic-sort/propose",
+        method: "POST",
+        json: {
+          ok: true,
+          considered: 2,
+          skipped: 0,
+          proposals: [
+            { session_id: "s-ops-1", title: "incident watch", action: "new_folder", target_name: "Operations" },
+            { session_id: "s-cowork-1", title: "hi there", action: "leave", target_name: "Leave where it is" },
+          ],
+        },
+      },
+    ]);
+    render(<Sidebar {...baseProps} onApplyMagicSort={onApplyMagicSort} />);
+
+    fireEvent.click(await screen.findByLabelText("Group and filter conversations"));
+    fireEvent.click(screen.getByTestId("magic-sort-menu-item"));
+
+    const panel = await screen.findByTestId("magic-sort-panel");
+    expect(within(panel).getByText("Review Magic sort")).toBeTruthy();
+    expect(within(panel).getByText("Operations")).toBeTruthy();
+    expect(within(panel).getByText("new")).toBeTruthy();
+    fireEvent.click(within(panel).getByLabelText("Exclude hi there"));
+    fireEvent.click(within(panel).getByText("Apply 1"));
+
+    await waitFor(() => expect(onApplyMagicSort).toHaveBeenCalledTimes(1));
+    expect(onApplyMagicSort.mock.calls[0][0]).toEqual([
+      { session_id: "s-ops-1", title: "incident watch", action: "new_folder", target_name: "Operations" },
+    ]);
+    await waitFor(() => expect(screen.queryByTestId("magic-sort-panel")).toBeNull());
+  });
+
+  it("shows a calm empty state when there are no useful moves", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+      { match: "/v1/folders", method: "GET", json: { folders: [] } },
+      {
+        match: "/v1/magic-sort/propose",
+        method: "POST",
+        json: { ok: true, considered: 2, skipped: 0, proposals: [] },
+      },
+    ]);
+    render(<Sidebar {...baseProps} />);
+
+    fireEvent.click(await screen.findByLabelText("Group and filter conversations"));
+    fireEvent.click(screen.getByTestId("magic-sort-menu-item"));
+
+    expect(await screen.findByText("Nothing to sort")).toBeTruthy();
+    expect(screen.getByText("Your recent chats already look tidy.")).toBeTruthy();
+  });
+});
+
+describe("Chat folder inline naming", () => {
+  const renderFolderLayout = async (extraRoutes: Parameters<typeof stubFetch>[0] = []) => {
+    const calls = stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "folder" } },
+      {
+        match: "/v1/folders",
+        method: "GET",
+        json: { folders: [{ id: "work", name: "Work", created: "2026-08-17T00:00:00Z" }] },
+      },
+      ...extraRoutes,
+    ]);
+    render(<Sidebar {...baseProps} />);
+    await screen.findByTestId("folder-layout");
+    return calls;
+  };
+
+  it("creates a folder from the inline input on Enter", async () => {
+    const calls = await renderFolderLayout([
+      {
+        match: "/v1/folders",
+        method: "POST",
+        json: { ok: true, folder: { id: "plans", name: "Plans", created: "2026-08-17T00:00:00Z" } },
+      },
+    ]);
+
+    fireEvent.click(screen.getByText("New folder"));
+    const input = screen.getByPlaceholderText("Folder name");
+    fireEvent.change(input, { target: { value: "Plans" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.method === "POST" && call.body?.name === "Plans")).toBe(true),
+    );
+    expect(await screen.findByText("Plans")).toBeTruthy();
+    expect(screen.queryByPlaceholderText("Folder name")).toBeNull();
+  });
+
+  it("cancels folder creation on Escape", async () => {
+    const calls = await renderFolderLayout();
+
+    fireEvent.click(screen.getByText("New folder"));
+    const input = screen.getByPlaceholderText("Folder name");
+    fireEvent.change(input, { target: { value: "Discard me" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(screen.queryByPlaceholderText("Folder name")).toBeNull();
+    expect(calls.filter((call) => call.method === "POST" && call.url.includes("/v1/folders"))).toHaveLength(0);
+  });
+
+  it("renames a folder from its pre-filled inline input on Enter", async () => {
+    const calls = await renderFolderLayout([
+      {
+        match: "/v1/folders/work/rename",
+        method: "POST",
+        json: { ok: true, folder: { id: "work", name: "Focus", created: "2026-08-17T00:00:00Z" } },
+      },
+    ]);
+
+    fireEvent.click(screen.getByLabelText("Folder actions for Work"));
+    fireEvent.click(screen.getByText("Rename"));
+    const input = screen.getByDisplayValue("Work");
+    fireEvent.change(input, { target: { value: "Focus" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.includes("/v1/folders/work/rename") && call.body?.name === "Focus")).toBe(true),
+    );
+    expect(await screen.findByText("Focus")).toBeTruthy();
+  });
+
+  it("does not create or rename a folder with a whitespace-only name", async () => {
+    const calls = await renderFolderLayout();
+
+    fireEvent.click(screen.getByText("New folder"));
+    let input = screen.getByPlaceholderText("Folder name");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    fireEvent.click(screen.getByLabelText("Folder actions for Work"));
+    fireEvent.click(screen.getByText("Rename"));
+    input = screen.getByDisplayValue("Work");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(calls.filter((call) => call.method === "POST" && call.url.includes("/v1/folders"))).toHaveLength(0);
   });
 });
 
@@ -164,6 +369,42 @@ describe("Chronological list row actions (⋮ menu)", () => {
     expect(screen.getByTestId("row-menu-rename")).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByTestId("row-menu-rename")).toBeNull();
+  });
+
+  it("moves a session to a folder through the secondary folder picker", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+      {
+        match: "/v1/folders",
+        method: "GET",
+        json: { folders: [{ id: "work", name: "Work", created: "2026-08-17T00:00:00Z" }] },
+      },
+    ]);
+    render(<Sidebar {...baseProps} />);
+    await screen.findByText("incident watch");
+
+    openOpsMenu();
+    fireEvent.click(screen.getByTestId("row-menu-folder"));
+    fireEvent.click(within(screen.getByTestId("folder-picker-menu")).getByText("Work"));
+    expect(baseProps.onSetSessionFolder).toHaveBeenCalledWith("s-ops-1", "work");
+  });
+});
+
+describe("Sweep to archive", () => {
+  it("requires a second click before archiving every session", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    render(<Sidebar {...baseProps} />);
+    const sweep = await screen.findByTestId("sweep-archive");
+
+    fireEvent.click(sweep);
+    expect(baseProps.onArchiveAllSessions).not.toHaveBeenCalled();
+    expect(sweep.textContent).toContain("Archive all?");
+    fireEvent.click(sweep);
+    expect(baseProps.onArchiveAllSessions).toHaveBeenCalledTimes(1);
   });
 });
 

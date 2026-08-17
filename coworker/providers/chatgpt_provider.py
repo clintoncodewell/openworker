@@ -15,6 +15,7 @@ import httpx
 from .base import AssistantTurn, ModelCapabilities, ProviderClient, StreamChunk, ToolCall
 from .capabilities import capabilities_for
 from .chatgpt_auth import ChatGPTAuthManager
+from .usage import capture_headers
 
 WHAM_URL = "https://chatgpt.com/backend-api/wham/responses"
 
@@ -193,6 +194,7 @@ class ChatGPTProvider(ProviderClient):
         calls: dict[int, dict[str, str]] = {}
         final_response: dict[str, Any] = {}
         with self._http.stream("POST", WHAM_URL, headers=headers, json=body) as response:
+            capture_headers("chatgpt", response.headers)
             if response.status_code != 200:
                 response.read()
                 raise RuntimeError(

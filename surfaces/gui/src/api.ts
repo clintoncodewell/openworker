@@ -1,4 +1,4 @@
-import type { SessionInfo, WsEvent } from "./types";
+import type { ChatFolder, SessionInfo, WsEvent } from "./types";
 
 // Endpoint resolution order: runtime-injected globals (Tauri sets `window.__COWORKER_HTTP__`
 // for its dynamically-chosen sidecar port) → Vite env → the 127.0.0.1:8765 dev default. This
@@ -111,6 +111,108 @@ export async function setSessionFlags(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(flags),
   });
+  return res.json();
+}
+
+export async function listFolders(): Promise<ChatFolder[]> {
+  const res = await fetch(`${httpBase()}/v1/folders`);
+  return (await res.json()).folders ?? [];
+}
+
+export async function createFolder(
+  name: string,
+): Promise<{ ok: boolean; folder?: ChatFolder; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/folders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return res.json();
+}
+
+export async function renameFolder(
+  id: string,
+  name: string,
+): Promise<{ ok: boolean; folder?: ChatFolder; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/folders/${encodeURIComponent(id)}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return res.json();
+}
+
+export async function deleteFolder(
+  id: string,
+): Promise<{ ok: boolean; cleared_sessions?: number; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/folders/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+export async function setSessionFolder(
+  sessionId: string,
+  folderId: string | null,
+): Promise<{ ok: boolean; folder_id?: string | null; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/folder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folder_id: folderId }),
+  });
+  return res.json();
+}
+
+export type MagicSortAction = "existing_folder" | "new_folder" | "project" | "leave";
+
+export interface MagicSortProposal {
+  session_id: string;
+  title: string;
+  action: MagicSortAction;
+  target_name: string;
+  folder_id?: string;
+  project_id?: string;
+}
+
+export interface MagicSortProposalResult {
+  ok: boolean;
+  proposals?: MagicSortProposal[];
+  considered?: number;
+  skipped?: number;
+  error?: string;
+}
+
+export interface MagicSortApplyResult {
+  ok: boolean;
+  moved?: number;
+  folders_created?: number;
+  skipped?: number;
+  unchanged?: number;
+  error?: string;
+}
+
+export async function proposeMagicSort(): Promise<MagicSortProposalResult> {
+  const res = await fetch(`${httpBase()}/v1/magic-sort/propose`, { method: "POST" });
+  return res.json();
+}
+
+export async function applyMagicSort(
+  proposals: MagicSortProposal[],
+): Promise<MagicSortApplyResult> {
+  const res = await fetch(`${httpBase()}/v1/magic-sort/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(proposals),
+  });
+  return res.json();
+}
+
+export async function archiveAllSessions(): Promise<{
+  ok: boolean;
+  archived_sessions?: number;
+  error?: string;
+}> {
+  const res = await fetch(`${httpBase()}/v1/sessions/archive-all`, { method: "POST" });
   return res.json();
 }
 
@@ -622,11 +724,12 @@ export interface ModelSettings {
   onboarded: boolean;
   surfaces: SurfaceVisibility;
   scratch_base: string;
+  brain_folder?: string | null;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
   // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
   // bounded per-persona cards. Defaults to "flat" (absent → flat) so the GUI is robust to an older
   // backend that hasn't shipped the field yet.
-  nav_layout?: "flat" | "grouped";
+  nav_layout?: "flat" | "grouped" | "folder";
   // Sidebar: sessions shown per group before "Show more" (default 5, 1–50).
   sessions_peek?: number;
   // Curated-matrix display names ({full id → "GLM-5.2 · via Together"}); custom models absent.
@@ -642,6 +745,43 @@ export interface PdfSettings {
   pdf_fallback: "text" | "images";
   pdf_max_pages: number;
   pdf_max_mb: number;
+}
+
+export interface UsageWindow {
+  id: string;
+  label: string;
+  used_percent?: number;
+  remaining_percent?: number;
+  remaining?: number | string;
+  reset_at?: number | string;
+  limit_window_seconds?: number;
+}
+
+export interface UsageMetric {
+  id: string;
+  label: string;
+  limit?: string;
+  remaining?: string;
+  reset?: string;
+}
+
+export interface ProviderUsage {
+  id: string;
+  title: string;
+  status: "ok" | "unavailable" | "not_configured";
+  kind: "quota_window" | "rate_limit_headroom" | "status_only";
+  label?: string;
+  message?: string | null;
+  plan?: string | null;
+  source?: "live_poll" | "inference_headers";
+  windows?: UsageWindow[];
+  metrics?: UsageMetric[];
+  credits?: Record<string, unknown>;
+  link?: string;
+}
+
+export interface UsageResponse {
+  providers: ProviderUsage[];
 }
 
 /** Persist the Token-savings PDF settings (fallback mode + attach thresholds). */
@@ -691,6 +831,22 @@ export async function setScratchBase(
   return res.json();
 }
 
+export async function getBrainFolder(): Promise<{ brain_folder: string | null }> {
+  const res = await fetch(`${httpBase()}/v1/settings/brain-folder`);
+  return res.json();
+}
+
+export async function setBrainFolder(
+  path: string | null,
+): Promise<{ ok: boolean; error?: string; brain_folder?: string | null }> {
+  const res = await fetch(`${httpBase()}/v1/settings/brain-folder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  return res.json();
+}
+
 export async function setSurfaces(
   flags: { chat?: boolean; code?: boolean },
 ): Promise<{ ok: boolean; surfaces: SurfaceVisibility }> {
@@ -704,8 +860,8 @@ export async function setSurfaces(
 
 /** Persist the sidebar layout preference (flat ↔ grouped-by-persona); read back from getSettings. */
 export async function setNavLayout(
-  layout: "flat" | "grouped",
-): Promise<{ ok: boolean; nav_layout?: "flat" | "grouped"; error?: string }> {
+  layout: "flat" | "grouped" | "folder",
+): Promise<{ ok: boolean; nav_layout?: "flat" | "grouped" | "folder"; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/settings/nav-layout`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1144,6 +1300,12 @@ export async function setUnattended(
 
 export async function getSettings(): Promise<ModelSettings> {
   const res = await fetch(`${httpBase()}/v1/settings`);
+  return res.json();
+}
+
+export async function getUsage(): Promise<UsageResponse> {
+  const res = await fetch(`${httpBase()}/v1/usage`);
+  if (!res.ok) throw new Error("Usage is temporarily unavailable");
   return res.json();
 }
 

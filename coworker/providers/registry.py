@@ -115,7 +115,14 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # so we just hand it the SecretStore. An optional custom endpoint (Azure OpenAI /openai/v1,
     # OpenRouter, vLLM, …) comes from the stored profile.
     base_url = ((profile or {}).get("base_url") or "").strip() or None
-    return OpenAIProvider(secrets=secrets, base_url=base_url)
+    # Only a real api.openai.com session may write the "openai" usage snapshot. A custom
+    # endpoint returns its OWN x-ratelimit-* headers, and captured under this id they would
+    # be shown as OpenAI's headroom and overwrite the genuine numbers.
+    return OpenAIProvider(
+        secrets=secrets,
+        base_url=base_url,
+        usage_provider_id=None if base_url else "openai",
+    )
 
 
 def _build_chatgpt(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -135,7 +142,10 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     except ValueError:
         thinking_budget = DEFAULT_THINKING_BUDGET
     return AnthropicProvider(
-        api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
+        api_key=api_key,
+        secrets=secrets,
+        thinking_budget=thinking_budget,
+        usage_provider_id="anthropic",
     )
 
 
@@ -148,7 +158,12 @@ def _build_zai_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClien
     base_url = ((profile or {}).get("base_url") or "").strip() or "https://api.z.ai/api/anthropic"
     if not api_key:
         raise RuntimeError("No Z AI API key configured — add it in Settings ▸ Models.")
-    return AnthropicProvider(api_key=api_key, base_url=base_url, secrets=secrets)
+    return AnthropicProvider(
+        api_key=api_key,
+        base_url=base_url,
+        secrets=secrets,
+        usage_provider_id=None,
+    )
 
 
 def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -171,7 +186,7 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Ollama's OpenAI-compatible endpoint ignores the key but the SDK requires a non-empty
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
-    return OpenAIProvider(api_key="ollama", base_url=base_url)
+    return OpenAIProvider(api_key="ollama", base_url=base_url, usage_provider_id=None)
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -203,6 +218,7 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
             api_key=api_key,
             base_url=base_url,
             supports_responses=vendor == "Azure Foundry GPT",
+            usage_provider_id=None,
         )
 
     return build

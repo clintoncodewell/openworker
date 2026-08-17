@@ -1,27 +1,33 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   announceCloudChanged,
   AUTOMATIONS_CHANGED,
   CLOUD_CHANGED,
   cloudLogin,
   cloudLogout,
+  createFolder,
   getAutomations,
   getCloudStatus,
   getPersonas,
   getProjects,
   getSettings,
+  listFolders,
+  proposeMagicSort,
   INBOX_UNLOCK,
   PERSONAS_CHANGED,
   PROJECTS_CHANGED,
+  renameFolder,
   setNavLayout,
   waitForCloudSignIn,
   type Automation,
   type CloudStatus,
+  type MagicSortApplyResult,
+  type MagicSortProposal,
   type Persona,
   type RecentWorkspace,
   type SurfaceVisibility,
 } from "../api";
-import type { SessionInfo } from "../types";
+import type { ChatFolder, SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
@@ -141,6 +147,10 @@ interface Props {
   onDeleteSession: (id: string) => void;
   onArchiveSession: (id: string, archived: boolean) => void;
   onTogglePin: (id: string, pinned: boolean) => void;
+  onSetSessionFolder: (id: string, folderId: string | null) => void;
+  onApplyMagicSort: (proposals: MagicSortProposal[]) => Promise<MagicSortApplyResult>;
+  onArchiveAllSessions: () => void;
+  onDeleteFolder: (id: string) => Promise<boolean>;
   onManage: () => void;
   // Grouped-nav gear + New-session menu's "Manage personas…" entry points (§7).
   onOpenPersona: (id: string) => void;
@@ -237,9 +247,31 @@ export function Sidebar(props: Props) {
   }, []);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [folderEditValue, setFolderEditValue] = useState("");
+  // undefined = idle, null = the folder-layout row, string = a session's folder picker.
+  const [creatingFolderForSession, setCreatingFolderForSession] = useState<
+    string | null | undefined
+  >(undefined);
   // Two-step delete inside the row's ⋮ menu: Delete arms ("Delete?"), a second click deletes.
   // Archive is the primary way to put a conversation away — one click, reversible.
   const [confirmDelId, setConfirmDelId] = useState<string | null>(null);
+  const [confirmSweep, setConfirmSweep] = useState(false);
+  const [folders, setFolders] = useState<ChatFolder[]>([]);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [folderMenu, setFolderMenu] = useState<{
+    id: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const [moveMenu, setMoveMenu] = useState<{
+    sessionId: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  useEffect(() => {
+    listFolders().then(setFolders).catch(() => setFolders([]));
+  }, []);
   // The open row-actions ⋮ menu (one at a time). Fixed-position, not absolute: the expanded
   // accordion group clips overflow (its rounded fill), so an absolute popover on its lower rows
   // would be cut off — same constraint as SlackDetail's person picker.
@@ -251,12 +283,13 @@ export function Sidebar(props: Props) {
   } | null>(null);
   const closeRowMenu = () => {
     setRowMenu(null);
+    setMoveMenu(null);
     setConfirmDelId(null);
   };
   const openRowMenu = (id: string, anchor: HTMLElement) => {
     const r = anchor.getBoundingClientRect();
     const MENU_W = 160; // w-40
-    const MENU_H = 150; // ~4 items + divider; only used to flip upward near the window bottom
+    const MENU_H = 190; // five items + divider; only used to flip upward near the window bottom
     setConfirmDelId(null);
     setRowMenu({
       id,
@@ -304,22 +337,28 @@ export function Sidebar(props: Props) {
   // Personas flag — with personas hidden for launch, a per-persona accordion groups by
   // a concept the user can't see, so the default is the flat chronological list
   // (owner call 2026-07-20). An explicit stored choice always wins.
-  const defaultLayout: "flat" | "grouped" = showPersonas() ? "grouped" : "flat";
-  const [layout, setLayout] = useState<"flat" | "grouped">(defaultLayout);
+  const defaultLayout: "flat" | "grouped" | "folder" = showPersonas() ? "grouped" : "flat";
+  const [layout, setLayout] = useState<"flat" | "grouped" | "folder">(defaultLayout);
   // Sessions shown per group before "Show more" — Settings ▸ Appearance ▸ Sidebar.
   const [peek, setPeek] = useState(5);
   useEffect(() => {
     getSettings()
       .then((s) => {
         setLayout(
-          s.nav_layout === "flat" ? "flat" : s.nav_layout === "grouped" ? "grouped" : defaultLayout,
+          s.nav_layout === "flat"
+            ? "flat"
+            : s.nav_layout === "grouped"
+              ? "grouped"
+              : s.nav_layout === "folder"
+                ? "folder"
+                : defaultLayout,
         );
         if (s.sessions_peek) setPeek(s.sessions_peek);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const setGroupBy = (next: "flat" | "grouped") => {
+  const setGroupBy = (next: "flat" | "grouped" | "folder") => {
     setLayout(next);
     setNavLayout(next).catch(() => {});
   };
@@ -329,6 +368,13 @@ export function Sidebar(props: Props) {
   const [recentExpanded, setRecentExpanded] = useState(false);
   // The RECENT-header group/filter popover (§20). Filter = show only these personas (empty = all).
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [magicSortState, setMagicSortState] = useState<
+    "idle" | "loading" | "preview" | "empty" | "error" | "applying"
+  >("idle");
+  const [magicSortProposals, setMagicSortProposals] = useState<MagicSortProposal[]>([]);
+  const [magicSortExcluded, setMagicSortExcluded] = useState<Set<string>>(new Set());
+  const [magicSortCounts, setMagicSortCounts] = useState({ considered: 0, skipped: 0 });
+  const magicSortRequest = useRef(0);
   const [filterPersonas, setFilterPersonas] = useState<Set<string>>(new Set());
   const toggleFilterPersona = (id: string) =>
     setFilterPersonas((prev) => {
@@ -338,6 +384,59 @@ export function Sidebar(props: Props) {
     });
   const personaVisible = (agent: string) =>
     filterPersonas.size === 0 || filterPersonas.has(agent);
+
+  const startMagicSort = async () => {
+    const request = magicSortRequest.current + 1;
+    magicSortRequest.current = request;
+    setGroupMenuOpen(false);
+    setMagicSortState("loading");
+    setMagicSortProposals([]);
+    setMagicSortExcluded(new Set());
+    try {
+      const result = await proposeMagicSort();
+      if (magicSortRequest.current !== request) return;
+      if (!result.ok) {
+        setMagicSortState("error");
+        return;
+      }
+      const proposals = result.proposals || [];
+      setMagicSortCounts({
+        considered: result.considered || 0,
+        skipped: result.skipped || 0,
+      });
+      setMagicSortProposals(proposals);
+      setMagicSortState(proposals.length ? "preview" : "empty");
+    } catch {
+      if (magicSortRequest.current !== request) return;
+      setMagicSortState("error");
+    }
+  };
+
+  const cancelMagicSort = () => {
+    magicSortRequest.current += 1;
+    setMagicSortState("idle");
+    setMagicSortProposals([]);
+    setMagicSortExcluded(new Set());
+  };
+
+  const submitMagicSort = async () => {
+    const selected = magicSortProposals.filter(
+      (proposal) => !magicSortExcluded.has(proposal.session_id),
+    );
+    if (!selected.length) return;
+    setMagicSortState("applying");
+    try {
+      const result = await props.onApplyMagicSort(selected);
+      if (!result.ok) {
+        setMagicSortState("error");
+        return;
+      }
+      listFolders().then(setFolders).catch(() => {});
+      cancelMagicSort();
+    } catch {
+      setMagicSortState("error");
+    }
+  };
 
   // Which accordion body is expanded. Decoupled from the active session (props.agent): expanding
   // a persona BROWSES its sessions without switching the chat area. Selecting a session or "New
@@ -449,6 +548,125 @@ export function Sidebar(props: Props) {
     .filter(matches)
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
 
+  const cancelFolderEdit = () => {
+    setEditingFolderId(null);
+    setCreatingFolderForSession(undefined);
+    setFolderEditValue("");
+  };
+  const startCreatingFolder = (sessionId: string | null) => {
+    setEditingFolderId(null);
+    setCreatingFolderForSession(sessionId);
+    setFolderEditValue("");
+  };
+  const createChatFolder = async (name: string, sessionId?: string) => {
+    const next = name.trim();
+    if (!next) {
+      cancelFolderEdit();
+      return;
+    }
+    const result = await createFolder(next);
+    if (!result.ok || !result.folder) return;
+    setFolders((current) => [...current, result.folder!]);
+    setCollapsedFolders((current) => {
+      const next = new Set(current);
+      next.delete(result.folder!.id);
+      return next;
+    });
+    if (sessionId) props.onSetSessionFolder(sessionId, result.folder.id);
+    cancelFolderEdit();
+    if (sessionId) closeRowMenu();
+  };
+  const renameChatFolder = async (folder: ChatFolder) => {
+    const next = folderEditValue.trim();
+    if (!next || next === folder.name) {
+      cancelFolderEdit();
+      return;
+    }
+    const result = await renameFolder(folder.id, next);
+    if (!result.ok || !result.folder) return;
+    setFolders((current) =>
+      current.map((entry) => (entry.id === folder.id ? result.folder! : entry)),
+    );
+    cancelFolderEdit();
+  };
+
+  const knownFolderIds = new Set(folders.map((folder) => folder.id));
+  const sessionsForFolder = (folderId: string) =>
+    recentSessions.filter((session) => session.folder_id === folderId);
+  const unfiledSessions = recentSessions.filter(
+    (session) => !session.folder_id || !knownFolderIds.has(session.folder_id),
+  );
+  const folderAttention = (sessions: SessionInfo[]) =>
+    sessions.reduce((total, session) => total + (session.attention || 0), 0);
+  const folderLiveness = (sessions: SessionInfo[]): "working" | "sleeping" | undefined =>
+    sessions.some((session) => session.liveness === "working")
+      ? "working"
+      : sessions.some((session) => session.liveness === "sleeping")
+        ? "sleeping"
+        : undefined;
+
+  const folderActions = (folder: ChatFolder) => {
+    const menuOpen = folderMenu?.id === folder.id;
+    const openMenu = (anchor: HTMLElement) => {
+      const rect = anchor.getBoundingClientRect();
+      setFolderMenu({
+        id: folder.id,
+        top: rect.bottom + 72 > window.innerHeight ? rect.top - 72 : rect.bottom + 4,
+        left: Math.max(8, rect.right - 144),
+      });
+    };
+    const item = (icon: IconName, label: string, onClick: () => void) => (
+      <button
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left hover:bg-paper active:bg-line/60"
+        role="menuitem"
+        onClick={() => {
+          setFolderMenu(null);
+          onClick();
+        }}
+      >
+        <Icon name={icon} size={13} className="shrink-0 text-muted" />
+        <span>{label}</span>
+      </button>
+    );
+    return (
+      <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
+        <button
+          className={
+            "w-6 h-6 grid place-items-center rounded-md hover:bg-panel active:bg-line/60 " +
+            (menuOpen ? "text-ink bg-panel" : "text-faint hover:text-ink")
+          }
+          aria-label={`Folder actions for ${folder.name}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(event) => (menuOpen ? setFolderMenu(null) : openMenu(event.currentTarget))}
+        >
+          <Icon name="moreHorizontal" size={14} className="rotate-90" />
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setFolderMenu(null)} />
+            <div
+              className="fixed z-50 w-36 rounded-xl border border-line bg-panel shadow-xl py-1"
+              style={{ top: folderMenu.top, left: folderMenu.left }}
+              role="menu"
+            >
+              {item("pencil", "Rename", () => {
+                setCreatingFolderForSession(undefined);
+                setEditingFolderId(folder.id);
+                setFolderEditValue(folder.name);
+              })}
+              {item("trash", "Delete", async () => {
+                if (await props.onDeleteFolder(folder.id)) {
+                  setFolders((current) => current.filter((entry) => entry.id !== folder.id));
+                }
+              })}
+            </div>
+          </>
+        )}
+      </span>
+    );
+  };
+
   // Row actions live behind ONE ⋮ kebab per row (FB-011: four hover icons read as clutter) —
   // the menu offers Rename · Pin/Unpin · Archive/Unarchive · Delete, with the two-step delete
   // confirm kept inside it. Shared by BOTH row styles, so the chronological cardRow offers the
@@ -505,6 +723,28 @@ export function Sidebar(props: Props) {
               {item("row-menu-pin", "pin", s.pinned ? "Unpin" : "Pin", () =>
                 props.onTogglePin(s.session_id, !s.pinned),
               )}
+              <button
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left hover:bg-paper active:bg-line/60"
+                data-testid="row-menu-folder"
+                role="menuitem"
+                aria-haspopup="menu"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const width = 176;
+                  setMoveMenu({
+                    sessionId: s.session_id,
+                    top: Math.max(8, Math.min(rect.top, window.innerHeight - 248)),
+                    left:
+                      rect.right + width <= window.innerWidth
+                        ? rect.right + 4
+                        : Math.max(8, rect.left - width - 4),
+                  });
+                }}
+              >
+                <Icon name="folder" size={13} className="shrink-0 text-muted" />
+                <span className="flex-1">Move to folder…</span>
+                <Icon name="chevronRight" size={12} className="text-faint" />
+              </button>
               {item("row-menu-archive", "archive", s.archived ? "Unarchive" : "Archive", () =>
                 props.onArchiveSession(s.session_id, !s.archived),
               )}
@@ -535,6 +775,70 @@ export function Sidebar(props: Props) {
                 </button>
               )}
             </div>
+            {moveMenu?.sessionId === s.session_id && (
+              <div
+                className="fixed z-[60] w-44 max-h-64 overflow-y-auto rounded-xl border border-line bg-panel shadow-xl py-1"
+                style={{ top: moveMenu.top, left: moveMenu.left }}
+                role="menu"
+                data-testid="folder-picker-menu"
+              >
+                <button
+                  className="w-full px-2.5 py-1.5 text-[12.5px] text-left hover:bg-paper active:bg-line/60"
+                  role="menuitem"
+                  onClick={() => {
+                    closeRowMenu();
+                    props.onSetSessionFolder(s.session_id, null);
+                  }}
+                >
+                  Unfiled
+                </button>
+                {folders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    className="w-full px-2.5 py-1.5 text-[12.5px] text-left truncate hover:bg-paper active:bg-line/60"
+                    role="menuitem"
+                    onClick={() => {
+                      closeRowMenu();
+                      props.onSetSessionFolder(s.session_id, folder.id);
+                    }}
+                  >
+                    {folder.name}
+                  </button>
+                ))}
+                <div className="h-px bg-line my-1 mx-2" />
+                {creatingFolderForSession === s.session_id ? (
+                  <div className="w-full flex items-center px-2.5 py-1">
+                    <input
+                      className="flex-1 min-w-0 px-1.5 py-0.5 rounded-md bg-panel border border-accent text-[13px] text-ink outline-none"
+                      value={folderEditValue}
+                      placeholder="Folder name"
+                      autoFocus
+                      onFocus={(event) => event.currentTarget.select()}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => setFolderEditValue(event.target.value)}
+                      onBlur={() => void createChatFolder(folderEditValue, s.session_id)}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter") {
+                          void createChatFolder(folderEditValue, s.session_id);
+                        } else if (event.key === "Escape") {
+                          cancelFolderEdit();
+                        }
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <button
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-[12.5px] text-left text-accent hover:bg-paper active:bg-line/60"
+                    role="menuitem"
+                    onClick={() => startCreatingFolder(s.session_id)}
+                  >
+                    <Icon name="folderPlus" size={13} />
+                    <span>New folder…</span>
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </span>
@@ -720,6 +1024,117 @@ export function Sidebar(props: Props) {
       </div>
     ) : null;
 
+  const magicSortPanel = () => {
+    if (magicSortState === "idle") return null;
+    const selectedCount = magicSortProposals.length - magicSortExcluded.size;
+    const isReview = magicSortState === "preview" || magicSortState === "applying";
+    return (
+      <div
+        className="absolute right-0 top-7 z-50 w-[min(320px,calc(100vw-24px))] rounded-xl border border-line bg-panel shadow-xl overflow-hidden"
+        data-testid="magic-sort-panel"
+      >
+        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-line">
+          <Icon
+            name={magicSortState === "loading" ? "refresh" : "sparkle"}
+            size={14}
+            className={magicSortState === "loading" ? "animate-spin motion-reduce:animate-none text-accent" : "text-accent"}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium text-ink">
+              {magicSortState === "loading"
+                ? "Sorting…"
+                : isReview
+                  ? "Review Magic sort"
+                  : magicSortState === "empty"
+                    ? "Nothing to sort"
+                    : "Could not sort right now"}
+            </div>
+            {isReview && (
+              <div className="text-[11px] text-faint tabular-nums">
+                {magicSortCounts.considered} considered
+                {magicSortCounts.skipped ? ` · ${magicSortCounts.skipped} skipped` : ""}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {magicSortState === "loading" && (
+          <div className="px-3 py-5 text-[12px] text-muted">Finding obvious homes for recent chats.</div>
+        )}
+        {magicSortState === "empty" && (
+          <div className="px-3 py-4 text-[12px] text-muted">Your recent chats already look tidy.</div>
+        )}
+        {magicSortState === "error" && (
+          <div className="px-3 py-4 text-[12px] text-muted">Try again in a moment.</div>
+        )}
+        {isReview && (
+          <div className="max-h-72 overflow-y-auto overscroll-contain p-1.5" data-testid="magic-sort-list">
+            {magicSortProposals.map((proposal) => {
+              const excluded = magicSortExcluded.has(proposal.session_id);
+              return (
+                <div
+                  key={proposal.session_id}
+                  className={
+                    "flex items-center gap-1 rounded-lg px-2 py-1 transition-colors " +
+                    (excluded ? "opacity-45" : "hover:bg-paper")
+                  }
+                >
+                  <div className="min-w-0 flex-1 py-1">
+                    <div className="text-[12px] text-ink truncate" title={proposal.title}>
+                      {proposal.title}
+                    </div>
+                    <div className="flex items-center gap-1 text-[11px] text-faint min-w-0">
+                      <span aria-hidden>→</span>
+                      <span className="truncate">{proposal.target_name}</span>
+                      {proposal.action === "new_folder" && (
+                        <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] font-semibold uppercase tracking-wide text-accent">
+                          new
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    className="w-10 h-10 shrink-0 grid place-items-center rounded-lg text-faint hover:text-ink hover:bg-line/50 active:bg-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                    aria-label={excluded ? `Include ${proposal.title}` : `Exclude ${proposal.title}`}
+                    aria-pressed={excluded}
+                    onClick={() =>
+                      setMagicSortExcluded((current) => {
+                        const next = new Set(current);
+                        excluded ? next.delete(proposal.session_id) : next.add(proposal.session_id);
+                        return next;
+                      })
+                    }
+                  >
+                    <Icon name={excluded ? "refresh" : "x"} size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 px-2.5 py-2 border-t border-line">
+          <button
+            className="min-h-10 px-3 rounded-lg text-[12px] text-muted hover:text-ink hover:bg-paper active:bg-line/60 disabled:opacity-45 disabled:cursor-not-allowed"
+            disabled={magicSortState === "applying"}
+            onClick={cancelMagicSort}
+          >
+            {isReview ? "Cancel" : "Close"}
+          </button>
+          {isReview && (
+            <button
+              className="min-h-10 px-3 rounded-lg bg-accent text-white text-[12px] font-medium hover:brightness-105 active:brightness-95 disabled:opacity-45 disabled:cursor-not-allowed tabular-nums"
+              disabled={magicSortState === "applying" || selectedCount === 0}
+              onClick={() => void submitMagicSort()}
+            >
+              {magicSortState === "applying" ? "Applying…" : `Apply ${selectedCount}`}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // RECENT header with the group/filter control (§20) — the group toggle moved off the brand bar.
   // "Group by" flips the persona accordion ↔ chronological list; "Filter by coworker" narrows to
   // the checked personas (none checked = all shown).
@@ -732,14 +1147,42 @@ export function Sidebar(props: Props) {
       <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">
         Recent
       </span>
-      <button
-        className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper -mr-1"
-        title="Group & filter conversations"
-        aria-label="Group and filter conversations"
-        onClick={() => setGroupMenuOpen((v) => !v)}
-      >
-        <Icon name="sliders" size={14} />
-      </button>
+      <div className="flex items-center gap-0.5 -mr-1">
+        {/* Armed sweep disarms on any outside click, the same way the row/group menus
+            close — otherwise it stays armed indefinitely and a much later click reads
+            as "Sweep" but fires the archive. */}
+        {confirmSweep && (
+          <div className="fixed inset-0 z-40" onClick={() => setConfirmSweep(false)} />
+        )}
+        <button
+          className={
+            "h-6 flex items-center gap-1 px-1.5 rounded-md text-[11px] hover:bg-paper active:bg-line/60 " +
+            (confirmSweep ? "relative z-50 font-medium text-danger" : "text-faint hover:text-ink")
+          }
+          title={confirmSweep ? "Click again to archive every conversation" : "Archive all conversations"}
+          data-testid="sweep-archive"
+          onClick={() => {
+            if (!confirmSweep) {
+              setConfirmSweep(true);
+              return;
+            }
+            setConfirmSweep(false);
+            props.onArchiveAllSessions();
+          }}
+        >
+          <Icon name="archive" size={12} />
+          <span>{confirmSweep ? "Archive all?" : "Sweep"}</span>
+        </button>
+        <button
+          className="w-6 h-6 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper active:bg-line/60 disabled:opacity-45 disabled:cursor-not-allowed"
+          title="Group & filter conversations"
+          aria-label="Group and filter conversations"
+          disabled={magicSortState !== "idle"}
+          onClick={() => setGroupMenuOpen((v) => !v)}
+        >
+          <Icon name="sliders" size={14} />
+        </button>
+      </div>
       {groupMenuOpen && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setGroupMenuOpen(false)} />
@@ -751,7 +1194,10 @@ export function Sidebar(props: Props) {
             <div className="px-2 pt-1 pb-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
               Group by
             </div>
-            {([["grouped", "Persona"], ["flat", "Chronological"]] as ["flat" | "grouped", string][]).map(
+            {([["grouped", "Persona"], ["folder", "Folder"], ["flat", "Chronological"]] as [
+              "flat" | "grouped" | "folder",
+              string,
+            ][]).map(
               ([key, label]) => (
                 <button
                   key={key}
@@ -763,6 +1209,15 @@ export function Sidebar(props: Props) {
                 </button>
               ),
             )}
+            <div className="my-1 border-t border-line" />
+            <button
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] text-left text-ink hover:bg-paper active:bg-line/60"
+              data-testid="magic-sort-menu-item"
+              onClick={() => void startMagicSort()}
+            >
+              <Icon name="sparkle" size={13} className="text-accent" />
+              <span>Magic sort</span>
+            </button>
             {filterPersonaList.length > 1 && (
               <>
                 <div className="my-1 border-t border-line" />
@@ -806,6 +1261,7 @@ export function Sidebar(props: Props) {
           </div>
         </>
       )}
+      {magicSortPanel()}
     </div>
     );
   };
@@ -1130,6 +1586,116 @@ export function Sidebar(props: Props) {
                   </div>
                 );
               })}
+            </div>
+            ) : layout === "folder" ? (
+            <div className="space-y-1.5" data-testid="folder-layout">
+              {creatingFolderForSession === null ? (
+                <div className="w-full flex items-center px-2 py-1 rounded-lg">
+                  <input
+                    className="flex-1 min-w-0 px-1.5 py-0.5 rounded-md bg-panel border border-accent text-[13px] text-ink outline-none"
+                    value={folderEditValue}
+                    placeholder="Folder name"
+                    autoFocus
+                    onFocus={(event) => event.currentTarget.select()}
+                    onChange={(event) => setFolderEditValue(event.target.value)}
+                    onBlur={() => void createChatFolder(folderEditValue)}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                      if (event.key === "Enter") void createChatFolder(folderEditValue);
+                      else if (event.key === "Escape") cancelFolderEdit();
+                    }}
+                  />
+                </div>
+              ) : (
+                <button
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12.5px] text-muted hover:text-ink hover:bg-paper active:bg-line/60"
+                  onClick={() => startCreatingFolder(null)}
+                >
+                  <Icon name="folderPlus" size={14} className="shrink-0" />
+                  <span>New folder</span>
+                </button>
+              )}
+              {folders.map((folder) => {
+                const sessions = sessionsForFolder(folder.id);
+                const expanded = !collapsedFolders.has(folder.id);
+                const editing = editingFolderId === folder.id;
+                return (
+                  <div
+                    key={folder.id}
+                    className={expanded ? "rounded-xl bg-paper/70 overflow-hidden" : ""}
+                  >
+                    <div
+                      className={
+                        "flex items-center gap-2 px-2 py-2 cursor-pointer select-none " +
+                        (expanded ? "" : "rounded-lg hover:bg-paper active:bg-line/60")
+                      }
+                      onClick={() => {
+                        if (!editing) {
+                          setCollapsedFolders((current) => toggleSet(current, folder.id));
+                        }
+                      }}
+                    >
+                      {editing ? (
+                        <input
+                          className="flex-1 min-w-0 px-1.5 py-0.5 rounded-md bg-panel border border-accent text-[13px] text-ink outline-none"
+                          value={folderEditValue}
+                          autoFocus
+                          onFocus={(event) => event.currentTarget.select()}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => setFolderEditValue(event.target.value)}
+                          onBlur={() => void renameChatFolder(folder)}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === "Enter") void renameChatFolder(folder);
+                            else if (event.key === "Escape") cancelFolderEdit();
+                          }}
+                        />
+                      ) : (
+                        <>
+                          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+                            {folder.name}
+                          </span>
+                          <LiveDot state={folderLiveness(sessions)} />
+                          <AttnBadge n={folderAttention(sessions)} />
+                          {folderActions(folder)}
+                          <Icon
+                            name={expanded ? "chevronDown" : "chevronRight"}
+                            size={15}
+                            className="text-faint shrink-0"
+                          />
+                        </>
+                      )}
+                    </div>
+                    {expanded && (
+                      <div className="px-1.5 pb-1.5 space-y-0.5">
+                        {sessions.length > 0 ? (
+                          sessions.map((session) => sessionRow(session, { showTime: true }))
+                        ) : (
+                          <div className="px-2 py-1.5 text-[12px] text-faint">No conversations</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div className="rounded-xl bg-paper/70 overflow-hidden" data-testid="folder-unfiled">
+                <div className="flex items-center gap-2 px-2 py-2 select-none">
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+                    Unfiled
+                  </span>
+                  <LiveDot state={folderLiveness(unfiledSessions)} />
+                  <AttnBadge n={folderAttention(unfiledSessions)} />
+                  {/* No chevron: Unfiled is always open, so an affordance that implies
+                      collapsing would be lying about what a click does. */}
+                </div>
+                <div className="px-1.5 pb-1.5 space-y-0.5">
+                  {unfiledSessions.length > 0 ? (
+                    unfiledSessions.map((session) => sessionRow(session, { showTime: true }))
+                  ) : (
+                    <div className="px-2 py-1.5 text-[12px] text-faint">No conversations</div>
+                  )}
+                </div>
+              </div>
             </div>
             ) : (
             <div className="space-y-0.5">

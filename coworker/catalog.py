@@ -23,13 +23,14 @@ from .agents.base import AgentContext
 from .risk import RiskClass
 from .tools.files import file_tools
 from .tools.git import git_tools
-from .tools.search import search_tools
+from .tools.search import knowledge_search_tools, search_tools
 from .tools.shell import shell_tools
 from .tools.todo import todo_tools
 
 # Context prerequisites a capability may require, mapped to a predicate over AgentContext.
 _REQUIREMENTS: dict[str, Callable[[AgentContext], bool]] = {
     "workspace": lambda c: c.workspace is not None,
+    "brain_folder": lambda c: c.brain_folder is not None and c.brain_folder.is_dir(),
     "executor": lambda c: c.executor is not None,
     "todo": lambda c: c.todo is not None,
 }
@@ -90,6 +91,10 @@ def _search(context: AgentContext) -> list:
     return search_tools(str(context.workspace))  # grep (ripgrep, .gitignore-aware)
 
 
+def _knowledge_search(context: AgentContext) -> list:
+    return knowledge_search_tools(str(context.brain_folder))
+
+
 def _shell(context: AgentContext) -> list:
     return shell_tools(context.executor)  # run_shell + background task tools
 
@@ -129,6 +134,14 @@ _CAPS: list[Capability] = [
         description="Fast code/content search (grep).",
         build=_search,
         requires=("workspace",),
+        risk=(RiskClass.READ,),
+    ),
+    Capability(
+        id="knowledge_search",
+        name="Knowledge folder search",
+        description="Search the user's personal Knowledge folder, separate from the workspace.",
+        build=_knowledge_search,
+        requires=("brain_folder",),
         risk=(RiskClass.READ,),
     ),
     Capability(

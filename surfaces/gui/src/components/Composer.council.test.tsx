@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Composer, withCouncil } from "./Composer";
 
 const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
+  sessionId: "test-session",
   mode: "interactive",
   model: "gpt-5.6-sol",
   running: false,

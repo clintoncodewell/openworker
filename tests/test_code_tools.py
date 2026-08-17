@@ -66,6 +66,21 @@ def test_grep_rejects_path_escape(tmp_path):
     assert "escapes" in grep(pattern="x", path="../..")["error"]
 
 
+def test_parse_rg_drops_matches_rg_followed_outside_root(tmp_path):
+    # rg's own symlink-following is a separate vector from the `path=".."` argument
+    # check above: rg can be pointed at a symlinked subdir that resolves outside
+    # root and still report a match there. _parse_rg must drop it, not leak the
+    # absolute out-of-root path.
+    import coworker.tools.search as search
+
+    outside = tmp_path.parent / f"outside-{tmp_path.name}"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("hello\n", encoding="utf-8")
+    stdout = f"{outside / 'secret.txt'}:1:hello\n"
+    result = search._parse_rg(stdout, tmp_path.resolve(), 100)
+    assert result["matches"] == []
+
+
 def test_py_grep_fallback_skips_ignored_dirs(tmp_path):
     _seed(tmp_path)
     res = _py_grep(tmp_path.resolve(), tmp_path.resolve(), "hello", None, 100)

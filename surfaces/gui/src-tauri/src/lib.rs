@@ -271,6 +271,17 @@ fn start_window_drag(window: tauri::WebviewWindow) -> bool {
     window.start_dragging().is_ok()
 }
 
+#[tauri::command]
+fn toggle_window_zoom(window: tauri::WebviewWindow) -> bool {
+    let is_maximized = window.is_maximized().unwrap_or(false);
+    let result = if is_maximized {
+        window.unmaximize()
+    } else {
+        window.maximize()
+    };
+    result.is_ok()
+}
+
 // -- local dictation ---------------------------------------------------------------------------
 // The actual microphone/model code lives in the Tauri-free `ocw-stt` crate. This shell owns the
 // macOS permission prompt and translates the reusable API into React-friendly Tauri commands.
@@ -603,6 +614,7 @@ pub fn run() {
             get_keep_awake,
             set_keep_awake,
             start_window_drag,
+            toggle_window_zoom,
             get_dictation_status,
             start_dictation,
             stop_dictation,

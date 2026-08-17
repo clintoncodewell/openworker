@@ -6,7 +6,14 @@ from ..catalog import expand
 from .base import Agent
 
 # Capabilities this surface composes from the vetted catalog (was a hand-written factory).
-CODE_CAPABILITIES = ["code_files", "git", "search", "shell", "todo"]
+CODE_CAPABILITIES = [
+    "code_files",
+    "git",
+    "search",
+    "knowledge_search",
+    "shell",
+    "todo",
+]
 
 CODE_INSTRUCTIONS = """You are coworker's coding agent — a careful, senior software engineer working in the user's \
 workspace. Make correct, minimal, well-integrated changes and verify them.

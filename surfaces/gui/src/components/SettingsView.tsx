@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import {
   getSettings,
+  getUsage,
+  setBrainFolder,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
   setSessionsPeek,
   type ModelSettings,
   type PdfSettings,
+  type ProviderUsage,
+  type UsageWindow,
 } from "../api";
 import {
   cancelDictationModelDownload,
@@ -16,6 +20,7 @@ import {
   getDictationStatus,
   getKeepAwake,
   checkForUpdate,
+  chooseFolder,
   installUpdate,
   isTauri,
   listenDictationDownloadProgress,
@@ -45,7 +50,7 @@ import { showPersonas } from "../flags";
 // Models + Personas host the existing tab components inside the page shell (field re-skin to follow).
 // "appearance" is the General tab's stable key — callers deep-link with it, so the
 // rename (UX-021) changed only the label. "files" folded into General as a card.
-type SetTab = "appearance" | "models" | "council" | "voice" | "personas";
+type SetTab = "appearance" | "models" | "usage" | "council" | "voice" | "personas";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
@@ -59,10 +64,11 @@ const BTN_BORDERED =
 const SET_TABS: {
   key: SetTab;
   label: string;
-  icon: "sliders" | "code" | "mic" | "sparkle" | "chat";
+  icon: "sliders" | "code" | "clock" | "mic" | "sparkle" | "chat";
 }[] = [
   { key: "appearance", label: "General", icon: "sliders" },
   { key: "models", label: "Models", icon: "code" },
+  { key: "usage", label: "Usage", icon: "clock" },
   { key: "council", label: "Council", icon: "chat" },
   { key: "voice", label: "Voice input", icon: "mic" },
   { key: "personas", label: "Personas", icon: "sparkle" },
@@ -123,6 +129,8 @@ export function SettingsView({
                 <TokenSavingsCard />
               </div>
             </section>
+          ) : tab === "usage" ? (
+            <UsageSection />
           ) : tab === "council" ? (
             <section>
               <PanelHead
@@ -139,6 +147,183 @@ export function SettingsView({
         </div>
       </div>
     </main>
+  );
+}
+
+// -- Usage: on-demand quota windows and throughput headroom --------------------
+const formatUsageNumber = (value: number | string | undefined) => {
+  if (value === undefined || value === null || value === "") return "—";
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric.toLocaleString() : String(value);
+};
+
+const formatReset = (value: number | string | undefined) => {
+  if (value === undefined || value === null || value === "") return "Reset time unavailable";
+  if (typeof value === "string" && !/^\d+(\.\d+)?$/.test(value)) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? `Resets in ${value}` : `Resets ${new Date(parsed).toLocaleString()}`;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "Reset time unavailable";
+  const millis = numeric > 10_000_000_000 ? numeric : numeric * 1000;
+  return `Resets ${new Date(millis).toLocaleString()}`;
+};
+
+function UsageMeter({ window }: { window: UsageWindow }) {
+  const used = Math.max(0, Math.min(100, window.used_percent ?? 0));
+  const remaining = window.remaining_percent ?? (window.used_percent === undefined ? undefined : 100 - used);
+  return (
+    <div className="rounded-lg border border-line bg-paper/60 px-3 py-3">
+      <div className="flex items-baseline gap-3">
+        <span className="text-[12.5px] font-medium text-ink">{window.label}</span>
+        <span className="ml-auto text-[12px] text-muted tabular-nums">
+          {remaining === undefined ? "Usage unavailable" : `${Math.round(remaining)}% left`}
+        </span>
+      </div>
+      <div
+        className="mt-2 h-2 overflow-hidden rounded-full bg-line"
+        role="progressbar"
+        aria-label={`${window.label} used`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(used)}
+      >
+        <div
+          className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none"
+          style={{ width: `${used}%` }}
+        />
+      </div>
+      <div className="mt-2 flex gap-3 text-[11.5px] text-muted tabular-nums">
+        <span>{Math.round(used)}% used</span>
+        {window.remaining !== undefined && <span>{formatUsageNumber(window.remaining)} remaining</span>}
+        <span className="ml-auto text-right">{formatReset(window.reset_at)}</span>
+      </div>
+    </div>
+  );
+}
+
+function UsageCard({ provider }: { provider: ProviderUsage }) {
+  return (
+    <article className={CARD + " overflow-hidden"} data-testid={`usage-card-${provider.id}`}>
+      <div className="flex items-start gap-3 px-4 py-3.5">
+        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accentSoft text-accent">
+          <Icon name={provider.kind === "quota_window" ? "clock" : "code"} size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h3 className="text-[13.5px] font-semibold text-ink">{provider.title}</h3>
+            {provider.plan && <span className="text-[11.5px] text-muted">{provider.plan}</span>}
+          </div>
+          {provider.label && <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted">{provider.label}</p>}
+        </div>
+        <span
+          className={
+            "shrink-0 rounded-full px-2 py-1 text-[11px] font-medium " +
+            (provider.status === "ok" ? "bg-green-50 text-green-700" : "bg-paper text-muted")
+          }
+        >
+          {provider.status === "ok" ? "Available" : "Unavailable"}
+        </span>
+      </div>
+
+      {provider.status !== "ok" ? (
+        <div className="border-t border-line bg-paper/40 px-4 py-4 text-[12.5px] text-muted">
+          {provider.message || "Temporarily unavailable"}
+        </div>
+      ) : provider.kind === "quota_window" ? (
+        <div className="space-y-2.5 border-t border-line px-4 py-4">
+          {(provider.windows || []).map((window) => <UsageMeter key={window.id} window={window} />)}
+        </div>
+      ) : provider.kind === "rate_limit_headroom" ? (
+        <div className="grid grid-cols-1 gap-2.5 border-t border-line px-4 py-4 sm:grid-cols-2">
+          {(provider.metrics || []).map((metric) => (
+            <div key={metric.id} className="rounded-lg border border-line bg-paper/60 px-3 py-3">
+              <div className="text-[11.5px] font-medium uppercase tracking-wide text-muted">{metric.label}</div>
+              <div className="mt-1 text-[20px] font-semibold tracking-tight text-ink tabular-nums">
+                {formatUsageNumber(metric.remaining)}
+              </div>
+              <div className="mt-0.5 text-[11.5px] text-muted tabular-nums">
+                {metric.limit ? `of ${formatUsageNumber(metric.limit)} · ` : ""}{formatReset(metric.reset)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="border-t border-line bg-paper/40 px-4 py-4 text-[13px] text-ink">
+          {provider.message || "Configured"}
+          {provider.link && (
+            <a
+              href={provider.link}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-3 inline-flex rounded-sm text-[12.5px] font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-panel"
+            >
+              Check in Google AI Studio
+            </a>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function UsageSection() {
+  const [providers, setProviders] = useState<ProviderUsage[] | null>(null);
+  const [error, setError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setError(false);
+    try {
+      setProviders((await getUsage()).providers);
+    } catch {
+      setError(true);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  return (
+    <section>
+      <div className="flex items-start gap-4">
+        <PanelHead
+          title="Usage"
+          sub="A live snapshot of subscription windows and current API throughput for your connected providers."
+        />
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          disabled={refreshing}
+          className="ml-auto mt-0.5 inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px] text-ink hover:border-lineStrong hover:bg-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-50"
+        >
+          <Icon name="refresh" size={14} className={refreshing ? "animate-spin motion-reduce:animate-none" : ""} />
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+
+      {providers === null && !error ? (
+        <div className="space-y-3" aria-label="Loading usage">
+          {[0, 1].map((item) => (
+            <div key={item} className={CARD + " p-4 animate-pulse motion-reduce:animate-none"}>
+              <div className="h-4 w-40 rounded bg-line" />
+              <div className="mt-3 h-2 w-full rounded bg-line" />
+              <div className="mt-2 h-2 w-2/3 rounded bg-line" />
+            </div>
+          ))}
+        </div>
+      ) : error && providers === null ? (
+        <div className={CARD + " p-4 text-[13px] text-muted"}>Usage is temporarily unavailable. Try refreshing in a moment.</div>
+      ) : providers?.length ? (
+        <div className="space-y-3">{providers.map((provider) => <UsageCard key={provider.id} provider={provider} />)}</div>
+      ) : (
+        <div className={CARD + " p-4 text-[13px] text-muted"}>Connect an account or API provider in Models to see usage here.</div>
+      )}
+    </section>
   );
 }
 
@@ -669,6 +854,8 @@ function FilesCard() {
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [scratchDraft, setScratchDraft] = useState("");
   const [scratchMsg, setScratchMsg] = useState<string | null>(null);
+  const [brainDraft, setBrainDraft] = useState("");
+  const [brainMsg, setBrainMsg] = useState<string | null>(null);
   const desktop = isTauri();
 
   const refresh = () =>
@@ -676,6 +863,7 @@ function FilesCard() {
       .then((s) => {
         setSettings(s);
         setScratchDraft((d) => d || s.scratch_base || "");
+        setBrainDraft(s.brain_folder || "");
       })
       .catch(() => setSettings(null));
   useEffect(() => {
@@ -695,6 +883,21 @@ function FilesCard() {
   const browseScratch = async () => {
     const picked = await pickFolder();
     if (picked) setScratchDraft(picked);
+  };
+  const saveBrain = async (path: string | null = brainDraft.trim() || null) => {
+    setBrainMsg(null);
+    const res = await setBrainFolder(path);
+    if (res.ok) {
+      setBrainDraft(res.brain_folder || "");
+      setBrainMsg(path ? "Saved." : "Cleared.");
+      refresh();
+    } else {
+      setBrainMsg(res.error || "Could not use that folder.");
+    }
+  };
+  const browseBrain = async () => {
+    const picked = await chooseFolder();
+    if (picked) setBrainDraft(picked);
   };
 
   if (!settings) return null;
@@ -727,6 +930,37 @@ function FilesCard() {
         folder; you can grant access to more folders inside any conversation.
       </div>
       {scratchMsg && <div className="text-[12.5px] text-muted mt-2.5">{scratchMsg}</div>}
+
+      <div className="border-t border-line mt-4 pt-4">
+        <div className={FIELD_LABEL}>Knowledge folder</div>
+        <div className="flex items-center gap-2 mt-2.5">
+          <input
+            className={INPUT}
+            type="text"
+            placeholder="Choose or paste a folder path…"
+            value={brainDraft}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => setBrainDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && saveBrain()}
+          />
+          <button className={BTN_BORDERED} onClick={browseBrain} title="Pick a folder">
+            Browse
+          </button>
+          <button className={BTN_ACCENT} onClick={() => saveBrain()} disabled={!brainDraft.trim()}>
+            Save
+          </button>
+          {(brainDraft || settings.brain_folder) && (
+            <button className={BTN_BORDERED} onClick={() => saveBrain(null)}>
+              Clear
+            </button>
+          )}
+        </div>
+        <div className={FIELD_HELP}>
+          Every chat can search this folder for context -- nothing in it is loaded automatically.
+        </div>
+        {brainMsg && <div className="text-[12.5px] text-muted mt-2.5">{brainMsg}</div>}
+      </div>
     </div>
   );
 }

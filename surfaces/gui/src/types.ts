@@ -52,6 +52,7 @@ export interface SessionInfo {
   messages: number;
   pinned?: boolean;
   archived?: boolean;
+  folder_id?: string | null;
   // Inbox items awaiting this session (the amber attention count that bubbles up the sidebar).
   attention?: number;
   // working = in-flight turn; sleeping = a self-wake is pending; idle = neither. A count-less dot.
@@ -63,6 +64,12 @@ export interface SessionInfo {
   // "From Slack" group and the row's platform icon.
   origin?: string;
   origin_label?: string;
+}
+
+export interface ChatFolder {
+  id: string;
+  name: string;
+  created: string;
 }
 
 // Attachments (images, PDFs, text files) sent with a user message.

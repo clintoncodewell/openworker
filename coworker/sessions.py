@@ -35,3 +35,4 @@ class SessionRecord:
     origin: Optional[str] = None
     origin_label: Optional[str] = None
     project_id: Optional[str] = None
+    folder_id: Optional[str] = None

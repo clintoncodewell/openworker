@@ -510,6 +510,22 @@ def create_app(manager: SessionManager) -> FastAPI:
     def projects_get() -> dict[str, Any]:
         return {"projects": manager.list_projects()}
 
+    @app.get("/v1/folders")
+    def folders_get() -> dict[str, Any]:
+        return manager.list_folders()
+
+    @app.post("/v1/folders")
+    def folders_create(body: dict) -> dict[str, Any]:
+        return manager.create_folder(str((body or {}).get("name", "")))
+
+    @app.post("/v1/folders/{folder_id}/rename")
+    def folder_rename(folder_id: str, body: dict) -> dict[str, Any]:
+        return manager.rename_folder(folder_id, str((body or {}).get("name", "")))
+
+    @app.delete("/v1/folders/{folder_id}")
+    def folder_delete(folder_id: str) -> dict[str, Any]:
+        return manager.delete_folder(folder_id)
+
     @app.post("/v1/projects")
     def projects_create(body: dict) -> dict[str, Any]:
         return manager.create_project(body or {})
@@ -537,6 +553,25 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/sessions/{session_id}/messages")
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
+
+    @app.post("/v1/sessions/archive-all")
+    def sessions_archive_all() -> dict[str, Any]:
+        return manager.archive_all_sessions()
+
+    @app.post("/v1/sessions/{session_id}/folder")
+    def session_set_folder(session_id: str, body: dict) -> dict[str, Any]:
+        folder_id = (body or {}).get("folder_id")
+        return manager.set_session_folder(
+            session_id, None if folder_id is None else str(folder_id)
+        )
+
+    @app.post("/v1/magic-sort/propose")
+    async def magic_sort_propose() -> dict[str, Any]:
+        return await manager.propose_magic_sort()
+
+    @app.post("/v1/magic-sort/apply")
+    def magic_sort_apply(body: list[dict[str, Any]]) -> dict[str, Any]:
+        return manager.apply_magic_sort(body or [])
 
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
@@ -1278,6 +1313,12 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_get() -> dict[str, Any]:
         return manager.get_settings()
 
+    @app.get("/v1/usage")
+    def usage_get() -> dict[str, Any]:
+        # FastAPI runs sync routes in its worker pool, so the two short best-effort vendor
+        # polls cannot stall websocket traffic.
+        return manager.get_usage()
+
     @app.post("/v1/settings/model-key")
     def settings_set_model_key(body: dict) -> dict[str, Any]:
         return manager.set_model_key((body or {}).get("api_key", ""))
@@ -1310,6 +1351,14 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/settings/scratch-base")
     def settings_set_scratch_base(body: dict) -> dict[str, Any]:
         return manager.set_scratch_base(str((body or {}).get("path", "")))
+
+    @app.get("/v1/settings/brain-folder")
+    def settings_get_brain_folder() -> dict[str, Any]:
+        return manager.get_brain_folder()
+
+    @app.post("/v1/settings/brain-folder")
+    def settings_set_brain_folder(body: dict) -> dict[str, Any]:
+        return manager.set_brain_folder((body or {}).get("path"))
 
     @app.post("/v1/settings/nav-layout")
     def settings_set_nav_layout(body: dict) -> dict[str, Any]:

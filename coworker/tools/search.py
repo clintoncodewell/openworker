@@ -1,7 +1,7 @@
-"""Fast code search (`grep`) — ripgrep when available, a Python walk otherwise.
+"""Fast text search — ripgrep when available, a Python walk otherwise.
 
 ripgrep respects `.gitignore`, so it skips `node_modules`/`target`/`dist` automatically; the
-fallback skips a hardcoded set of heavy dirs. Read-only, workspace-scoped. Returns file:line:text.
+fallback skips a hardcoded set of heavy dirs. Read-only and root-scoped. Returns file:line:text.
 """
 
 from __future__ import annotations
@@ -66,10 +66,54 @@ _SCHEMA = {
     },
 }
 
+_KNOWLEDGE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "search_knowledge_folder",
+        "description": (
+            "Search the user's personal Knowledge folder for a regular-expression pattern and "
+            "return matching lines as file:line:text. This searches the globally configured "
+            "Knowledge folder, NOT the current session workspace. Nothing is loaded unless you "
+            "search for it. Read-only."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Regular expression to search for in the Knowledge folder.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Subdirectory within the Knowledge folder (default: whole folder)."
+                    ),
+                },
+                "glob": {
+                    "type": "string",
+                    "description": "Optional filename glob filter, e.g. '*.md'.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max matches (default 100, max 1000).",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+}
+
 
 def search_tools(workspace: str) -> list:
-    root = Path(workspace).resolve()
+    return _search_tools(Path(workspace).resolve(), _SCHEMA, "workspace")
 
+
+def knowledge_search_tools(folder: str) -> list:
+    """Build the read-only search tool for the globally configured Knowledge folder."""
+    return _search_tools(Path(folder).resolve(), _KNOWLEDGE_SCHEMA, "Knowledge folder")
+
+
+def _search_tools(root: Path, schema: dict[str, Any], scope: str) -> list:
     def grep(
         pattern: str,
         path: str = ".",
@@ -80,9 +124,9 @@ def search_tools(workspace: str) -> list:
         n = min(n, 1000)
         base = (root / (path or ".")).resolve()
         try:
-            base.relative_to(root)  # keep searches inside the workspace
+            base.relative_to(root)  # keep searches inside the configured root
         except ValueError:
-            return {"error": "path escapes the workspace"}
+            return {"error": f"path escapes the {scope}"}
 
         rg = shutil.which("rg")
         if rg:
@@ -114,16 +158,17 @@ def search_tools(workspace: str) -> list:
 
         return {"engine": "python", **_py_grep(root, base, pattern, glob, n)}
 
-    grep.__name__ = "grep"
-    grep.__doc__ = _SCHEMA["function"]["description"]
+    tool_name = schema["function"]["name"]
+    grep.__name__ = tool_name
+    grep.__doc__ = schema["function"]["description"]
     grep.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="grep",
+        name=tool_name,
         category="search",
         risk_level="low",
         capabilities=["search"],
         requires_approval=False,
     )
-    grep.__coworker_schema__ = _SCHEMA
+    grep.__coworker_schema__ = schema
     return [grep]
 
 
@@ -140,9 +185,16 @@ def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
         parts = line.split(":", 2)
         if len(parts) == 3:
             f, ln, txt = parts
+            try:
+                rel = str(Path(f).resolve().relative_to(root))
+            except (ValueError, OSError):
+                # rg followed a symlink out of the search root — drop the match rather
+                # than leak an absolute out-of-root path (the entry-point escape check
+                # only guards the search root, not what rg then traverses into).
+                continue
             matches.append(
                 {
-                    "file": _rel(f, root),
+                    "file": rel,
                     "line": int(ln) if ln.isdigit() else 0,
                     "text": txt[:300],
                 }

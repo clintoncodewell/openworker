@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import {
   announceInboxUnlock,
+  applyMagicSort,
+  archiveAllSessions,
+  deleteFolder,
   finalizeAutomationRun,
   getArtifacts,
   getHealth,
@@ -19,10 +22,12 @@ import {
   renameSession,
   runAutomation,
   setSessionFlags,
+  setSessionFolder,
   setUnattended,
   Session,
   type InboxItem,
   type MessageSource,
+  type MagicSortProposal,
   type Persona,
   type RecentWorkspace,
   type SurfaceVisibility,
@@ -33,7 +38,7 @@ import { baseName } from "./paths";
 import { itemsFromMessages, userItemFromContent } from "./itemsFromMessages";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
-import { isTauri, platformOS, startWindowDrag } from "./tauri";
+import { isTauri, platformOS, startWindowDrag, toggleWindowZoom } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
@@ -1095,6 +1100,33 @@ export function App() {
       setSessionId(newId());
     }
   };
+  const moveSessionToFolder = async (id: string, folderId: string | null) => {
+    const res = await setSessionFolder(id, folderId);
+    if (res.ok) refreshSessions();
+  };
+  const applySidebarMagicSort = async (proposals: MagicSortProposal[]) => {
+    const res = await applyMagicSort(proposals);
+    if (res.ok) refreshSessions();
+    return res;
+  };
+  const sweepSessionsToArchive = async () => {
+    const activeWasSaved = sessions.some((s) => s.session_id === sessionId && !s.archived);
+    const res = await archiveAllSessions();
+    if (!res.ok) return;
+    refreshSessions();
+    if (activeWasSaved) {
+      setItems([]);
+      setStreaming("");
+      setTodo([]);
+      setRunning(false);
+      setSessionId(newId());
+    }
+  };
+  const removeChatFolder = async (id: string) => {
+    const res = await deleteFolder(id);
+    if (res.ok) refreshSessions();
+    return res.ok;
+  };
   const deleteConversation = async (id: string) => {
     const res = await deleteSession(id);
     if (!res.ok) return;
@@ -1162,6 +1194,10 @@ export function App() {
   const beginWindowDrag = (event: PointerEvent) => {
     if (!desktop || event.button !== 0) return;
     startWindowDrag();
+  };
+  const handleTitlebarDoubleClick = (event: React.MouseEvent) => {
+    if (!desktop || event.target !== event.currentTarget) return;
+    toggleWindowZoom();
   };
 
   if (booting || !uiReady) {
@@ -1307,6 +1343,10 @@ export function App() {
         onDeleteSession={deleteConversation}
         onArchiveSession={toggleArchived}
         onTogglePin={togglePinned}
+        onSetSessionFolder={moveSessionToFolder}
+        onApplyMagicSort={applySidebarMagicSort}
+        onArchiveAllSessions={sweepSessionsToArchive}
+        onDeleteFolder={removeChatFolder}
         onManage={() => openSettings("appearance")}
         onOpenPersona={(id) => {
           openPersona(id, "session");
@@ -1364,7 +1404,11 @@ export function App() {
           {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
               while the sidebar is collapsed (§22; the expanded sidebar already owns those
               actions). Clicks must not start a window drag. */}
-          <div className="main-topbar-side" onPointerDown={beginWindowDrag}>
+          <div
+            className="main-topbar-side"
+            onPointerDown={beginWindowDrag}
+            onDoubleClick={handleTitlebarDoubleClick}
+          >
             {navCollapsed && (
               <div
                 className="flex items-center gap-1"
@@ -1404,7 +1448,11 @@ export function App() {
           {/* Center: title + facts subtitle (§22, amended: the ⋯ menu removed — the nav row's
               hover cluster owns pin/rename/archive/delete). The title stays: with the sidebar
               collapsed it is the only session identifier, and it anchors the subtitle. */}
-          <div className="main-title" onPointerDown={beginWindowDrag}>
+          <div
+            className="main-title"
+            onPointerDown={beginWindowDrag}
+            onDoubleClick={handleTitlebarDoubleClick}
+          >
             <span
               className={"main-title-text" + (activeInfo ? "" : " title-ghost")}
               title={activeTitle}
@@ -1421,7 +1469,11 @@ export function App() {
           </div>
           {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
               gone — the facts live in the subtitle, the controls in the composer (§22). */}
-          <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
+          <div
+            className="main-topbar-side main-topbar-actions"
+            onPointerDown={beginWindowDrag}
+            onDoubleClick={handleTitlebarDoubleClick}
+          >
             {agent === "cowork" && railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"
@@ -1574,6 +1626,7 @@ export function App() {
             />
 
             <Composer
+              sessionId={sessionId}
               mode={mode}
               model={model}
               models={models}

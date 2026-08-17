@@ -75,6 +75,10 @@ def test_default_model_and_onboarding_persist(tmp_path, monkeypatch):
     from coworker.server.manager import SessionManager
 
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(SessionManager, "_curated_models", lambda self: [self.model])
+    monkeypatch.setattr(
+        SessionManager, "_provider_configured", lambda self, provider: False
+    )
     data_dir = tmp_path / "data"
     client = TestClient(create_app(SessionManager(data_dir=data_dir)))
 
@@ -118,6 +122,10 @@ def test_nav_layout_setting_roundtrips(tmp_path, monkeypatch):
     assert resp == {"ok": True, "nav_layout": "grouped"}
     assert client.get("/v1/settings").json()["nav_layout"] == "grouped"
 
+    folder = client.post("/v1/settings/nav-layout", json={"nav_layout": "folder"}).json()
+    assert folder == {"ok": True, "nav_layout": "folder"}
+    assert client.get("/v1/settings").json()["nav_layout"] == "folder"
+
     # unknown value falls back to flat; persists across a restart
     assert (
         client.post("/v1/settings/nav-layout", json={"nav_layout": "bogus"}).json()[
@@ -157,6 +165,43 @@ def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeyp
     assert reborn.get_settings()["scratch_base"] == str(base)
     scratch = reborn._provision_scratch("sess-xyz")
     assert Path(scratch) == (base / "sess-xyz").resolve() and Path(scratch).is_dir()
+
+
+def test_brain_folder_setting_set_clear_and_invalid(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    data_dir = tmp_path / "data"
+    manager = SessionManager(data_dir=data_dir)
+
+    assert manager.get_brain_folder() == {"brain_folder": None}
+
+    knowledge = tmp_path / "personal knowledge"
+    knowledge.mkdir()
+    set_result = manager.set_brain_folder(str(knowledge))
+    assert set_result["ok"] is True
+    assert set_result["brain_folder"] == str(knowledge)
+    assert manager.get_settings()["brain_folder"] == str(knowledge)
+    assert SessionManager(data_dir=data_dir).get_brain_folder()[
+        "brain_folder"
+    ] == str(knowledge)
+    engine = manager.get_engine("chat-with-knowledge", agent="chat")
+    assert engine is not None
+    assert "search_knowledge_folder" in engine.registry.names()
+
+    invalid = manager.set_brain_folder(str(tmp_path / "missing"))
+    assert invalid["ok"] is False
+    assert manager.get_brain_folder()["brain_folder"] == str(knowledge)
+
+    cleared = manager.set_brain_folder(None)
+    assert cleared["ok"] is True and cleared["brain_folder"] is None
+    assert SessionManager(data_dir=data_dir).get_brain_folder()["brain_folder"] is None
+    rebuilt = manager.get_engine("chat-with-knowledge", agent="chat")
+    assert rebuilt is not None and rebuilt is not engine
+    assert "search_knowledge_folder" not in rebuilt.registry.names()
+
+    assert manager.set_brain_folder(str(knowledge))["ok"] is True
+    assert manager.set_brain_folder("")["brain_folder"] is None
 
 
 def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):

@@ -22,6 +22,7 @@ const RECORDING = { ...READY, recording: true };
 let invoke: ReturnType<typeof vi.fn>;
 
 const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
+  sessionId: "test-session",
   mode: "interactive",
   model: "gpt-5.6-sol",
   running: false,

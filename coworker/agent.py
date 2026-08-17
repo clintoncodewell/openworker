@@ -127,6 +127,7 @@ def build_engine(
     session_id: Optional[str] = None,
     audit_sink: Optional[Any] = None,
     roots: Optional[list] = None,
+    brain_folder: Optional[str | Path] = None,
     directory_requester: Optional[Any] = None,
     plan_approver: Optional[Any] = None,
     question_asker: Optional[Any] = None,
@@ -155,8 +156,13 @@ def build_engine(
         LocalExecutor(cwd=ws) if (agent.needs_workspace and ws is not None) else None
     )
     todo = TodoList()
+    knowledge_root = Path(brain_folder).expanduser().resolve() if brain_folder else None
     context = AgentContext(
-        workspace=ws, executor=executor, todo=todo, roots=root_list or None
+        workspace=ws,
+        brain_folder=knowledge_root,
+        executor=executor,
+        todo=todo,
+        roots=root_list or None,
     )
 
     registry = ToolRegistry()

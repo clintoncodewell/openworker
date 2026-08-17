@@ -19,6 +19,8 @@ from typing import Optional
 
 from .sessions import SessionRecord
 
+_UNSET = object()
+
 
 def _load_roots(raw: Optional[str]) -> list[dict]:
     if not raw:
@@ -77,6 +79,7 @@ class ConversationStore:
                 extra_roots TEXT, pinned INTEGER DEFAULT 0, archived INTEGER DEFAULT 0,
                 origin TEXT, origin_label TEXT,
                 project_id TEXT,
+                folder_id TEXT,
                 auto_title TEXT, renamed INTEGER DEFAULT 0,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
@@ -97,6 +100,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN renamed INTEGER DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN grants TEXT",
             "ALTER TABLE sessions ADD COLUMN project_id TEXT",
+            "ALTER TABLE sessions ADD COLUMN folder_id TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -193,8 +197,8 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, project_id, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, project_id, folder_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
@@ -206,6 +210,7 @@ class ConversationStore:
                     -- engine still believes it is attached. The row and the project folder
                     -- then disagree, and nothing notices.
                     project_id = COALESCE(excluded.project_id, sessions.project_id),
+                    folder_id = COALESCE(excluded.folder_id, sessions.folder_id),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -219,6 +224,7 @@ class ConversationStore:
                     json.dumps(record.extra_roots or []),
                     json.dumps(record.grants or {}),
                     record.project_id,
+                    record.folder_id,
                 ),
             )
             self._conn.commit()
@@ -256,6 +262,7 @@ class ConversationStore:
             origin=row["origin"],
             origin_label=row["origin_label"],
             project_id=row["project_id"] if "project_id" in row.keys() else None,
+            folder_id=row["folder_id"] if "folder_id" in row.keys() else None,
         )
 
     def set_extra_roots(self, session_id: str, extra_roots: list[dict]) -> None:
@@ -295,6 +302,7 @@ class ConversationStore:
                 origin=r["origin"],
                 origin_label=r["origin_label"],
                 project_id=r["project_id"] if "project_id" in r.keys() else None,
+                folder_id=r["folder_id"] if "folder_id" in r.keys() else None,
             )
             for r in rows
         ]
@@ -399,8 +407,9 @@ class ConversationStore:
         *,
         pinned: Optional[bool] = None,
         archived: Optional[bool] = None,
+        folder_id: Optional[str] | object = _UNSET,
     ) -> bool:
-        """Update pin/archive flags without touching updated_at (so pinning doesn't reorder)."""
+        """Update sidebar metadata without touching updated_at (so moves do not reorder)."""
         sets, params = [], []
         if pinned is not None:
             sets.append("pinned = ?")
@@ -408,6 +417,9 @@ class ConversationStore:
         if archived is not None:
             sets.append("archived = ?")
             params.append(1 if archived else 0)
+        if folder_id is not _UNSET:
+            sets.append("folder_id = ?")
+            params.append((str(folder_id or "")).strip() or None)
         if not sets:
             return False
         with self._lock:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from coworker.agents.base import AgentContext
+from coworker.agents.chat import chat_agent
 from coworker.agents.code import CODE_CAPABILITIES, code_agent
 from coworker.agents.cowork import COWORK_CAPABILITIES, cowork_agent
 from coworker.catalog import CATALOG, capability, expand, risk_summary
@@ -58,7 +59,15 @@ def _full_context(tmp_path) -> AgentContext:
 
 
 def test_catalog_registers_expected_ids():
-    assert {"code_files", "files", "git", "search", "shell", "todo"} <= set(CATALOG)
+    assert {
+        "code_files",
+        "files",
+        "git",
+        "search",
+        "knowledge_search",
+        "shell",
+        "todo",
+    } <= set(CATALOG)
     for cap in CATALOG.values():
         assert cap.id and cap.name and callable(cap.build)
 
@@ -102,6 +111,25 @@ def test_requirements_skip_unavailable(tmp_path):
     no_ws = AgentContext(workspace=None, executor=object(), todo=TodoList())
     names = _names(expand(CODE_CAPABILITIES, no_ws))
     assert names == {"run_shell", "shell_task_output", "shell_task_kill", "todo_write"}
+
+
+def test_knowledge_search_requires_configured_folder(tmp_path):
+    assert expand(["knowledge_search"], AgentContext()) == []
+    assert chat_agent().build_tools(AgentContext()) == []
+
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "notes.md").write_text("Project Atlas is due Friday.\n", encoding="utf-8")
+    context = AgentContext(brain_folder=knowledge)
+    tools = expand(["knowledge_search"], context)
+
+    assert _names(tools) == {"search_knowledge_folder"}
+    assert _names(chat_agent().build_tools(context)) == {"search_knowledge_folder"}
+    schema = tools[0].__coworker_schema__["function"]
+    assert schema["name"] == "search_knowledge_folder"
+    assert "NOT the current session workspace" in schema["description"]
+    result = tools[0](pattern="Atlas")
+    assert result["count"] == 1 and result["matches"][0]["file"] == "notes.md"
 
 
 def test_risk_summary():

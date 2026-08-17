@@ -8,6 +8,7 @@ from coworker.providers import ChatGPTProvider, ToolCall
 from coworker.providers.chatgpt_auth import extract_account_id
 from coworker.providers.chatgpt_provider import responses_input, responses_tools
 from coworker.providers.matrix import models_for_provider
+from coworker.providers.usage import cached_headers, clear_cache
 
 
 class _Auth:
@@ -73,6 +74,7 @@ def test_responses_tools_flattens_chat_completions_shape():
 
 
 def test_stream_parses_text_and_function_calls():
+    clear_cache()
     captured = {}
     sse = "\n".join(
         [
@@ -87,7 +89,16 @@ def test_stream_parses_text_and_function_calls():
     def handler(request: httpx.Request):
         captured["headers"] = request.headers
         captured["json"] = json.loads(request.content)
-        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+        return httpx.Response(
+            200,
+            text=sse,
+            headers={
+                "content-type": "text/event-stream",
+                "x-codex-primary-used-percent": "37",
+                "x-codex-primary-window-minutes": "300",
+                "x-codex-credits-balance": "12.5",
+            },
+        )
 
     provider = ChatGPTProvider(
         secrets=None,
@@ -110,6 +121,11 @@ def test_stream_parses_text_and_function_calls():
     assert captured["headers"]["chatgpt-account-id"] == "acct_123"
     assert captured["json"]["store"] is False
     assert captured["json"]["tools"][0]["name"] == "write_file"
+    assert cached_headers("chatgpt") == {
+        "x-codex-primary-used-percent": "37",
+        "x-codex-primary-window-minutes": "300",
+        "x-codex-credits-balance": "12.5",
+    }
 
 
 def test_extract_account_id_from_nested_claim():

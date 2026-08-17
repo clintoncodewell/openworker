@@ -19,6 +19,7 @@ from .base import (
     ToolCall,
 )
 from .capabilities import capabilities_for
+from .usage import capture_headers
 
 
 def resolve_api_key(secrets: Any = None) -> Optional[str]:
@@ -74,6 +75,7 @@ def _wants_responses(exc: Exception, kwargs: dict[str, Any]) -> bool:
 
 def _responses_or_original(
     exc: Exception,
+    provider: "OpenAIProvider",
     client: Any,
     model: str,
     messages: list[dict[str, Any]],
@@ -89,7 +91,7 @@ def _responses_or_original(
     actionable message ("use /v1/responses") with one that explains nothing.
     """
     try:
-        return _complete_responses(client, model, messages, tools, settings)
+        return _complete_responses(provider, client, model, messages, tools, settings)
     except Exception:
         raise exc from None
 
@@ -151,6 +153,7 @@ class OpenAIProvider(ProviderClient):
         base_url: Optional[str] = None,
         secrets: Any = None,
         supports_responses: Optional[bool] = None,
+        usage_provider_id: Optional[str] = "openai",
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -174,7 +177,25 @@ class OpenAIProvider(ProviderClient):
         # and, if it turns out to need the other one, recovers through the server's own 400
         # at the cost of one round trip.
         self._supports_responses = bool(supports_responses)
+        # OpenAI-compatible vendors reuse this class but must not overwrite OpenAI's
+        # own throughput snapshot. Their v1 usage signals are intentionally out of scope.
+        self._usage_provider_id = usage_provider_id
         self.default_model = default_model
+
+    def _create(self, resource: Any, **kwargs: Any) -> Any:
+        """Send through the SDK's raw-response facade when present so headers survive."""
+        raw_resource = getattr(resource, "with_raw_response", None)
+        if raw_resource is not None:
+            raw = raw_resource.create(**kwargs)
+            capture_headers(self._usage_provider_id, getattr(raw, "headers", None))
+            return raw.parse()
+        response = resource.create(**kwargs)
+        capture_headers(
+            self._usage_provider_id,
+            getattr(response, "response_headers", None)
+            or getattr(getattr(response, "_response", None), "headers", None),
+        )
+        return response
 
     def _responses_required(self, model: str, tools: Optional[list[dict[str, Any]]]) -> bool:
         # Keep the proactive list exact: routing a merely OpenAI-shaped vendor to an
@@ -214,7 +235,7 @@ class OpenAIProvider(ProviderClient):
     ) -> AssistantTurn:
         client = self._ensure_client()
         if self._responses_required(model, tools):
-            return _complete_responses(client, model, messages, tools, settings)
+            return _complete_responses(self, client, model, messages, tools, settings)
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -232,16 +253,16 @@ class OpenAIProvider(ProviderClient):
         # either the answer or the server's own 400.
         for _ in range(2):
             try:
-                response = client.chat.completions.create(**kwargs)
+                response = self._create(client.chat.completions, **kwargs)
                 break
             except Exception as exc:
                 if tools and _wants_responses(exc, kwargs):
                     return _responses_or_original(
-                        exc, client, model, messages, tools, settings
+                        exc, self, client, model, messages, tools, settings
                     )
                 kwargs = _param_fix_retry(kwargs, exc)
         else:
-            response = client.chat.completions.create(**kwargs)
+            response = self._create(client.chat.completions, **kwargs)
         choice = response.choices[0]
         message = choice.message
         text = getattr(message, "content", None)
@@ -268,7 +289,7 @@ class OpenAIProvider(ProviderClient):
     ):
         client = self._ensure_client()
         if self._responses_required(model, tools):
-            yield from _stream_responses(client, model, messages, tools, settings)
+            yield from _stream_responses(self, client, model, messages, tools, settings)
             return
 
         kwargs: dict[str, Any] = {
@@ -290,12 +311,12 @@ class OpenAIProvider(ProviderClient):
         # `chunks` is unassigned when both fixes were needed.
         for _ in range(2):
             try:
-                chunks = client.chat.completions.create(**kwargs)
+                chunks = self._create(client.chat.completions, **kwargs)
                 break
             except Exception as exc:
                 if tools and _wants_responses(exc, kwargs):
                     try:
-                        stream = _stream_responses(client, model, messages, tools, settings)
+                        stream = _stream_responses(self, client, model, messages, tools, settings)
                         first = next(stream, None)
                     except Exception:
                         raise exc from None  # see _responses_or_original
@@ -305,7 +326,7 @@ class OpenAIProvider(ProviderClient):
                     return
                 kwargs = _param_fix_retry(kwargs, exc)
         else:
-            chunks = client.chat.completions.create(**kwargs)
+            chunks = self._create(client.chat.completions, **kwargs)
         for chunk in chunks:
             choices = getattr(chunk, "choices", None)
             if not choices:
@@ -545,13 +566,16 @@ def _raise_if_failed(response: Any) -> None:
 
 
 def _complete_responses(
+    provider: OpenAIProvider,
     client: Any,
     model: str,
     messages: list[dict[str, Any]],
     tools: Optional[list[dict[str, Any]]],
     settings: dict[str, Any],
 ) -> AssistantTurn:
-    response = client.responses.create(**_responses_kwargs(model, messages, tools, settings))
+    response = provider._create(
+        client.responses, **_responses_kwargs(model, messages, tools, settings)
+    )
     _raise_if_failed(response)
     tool_calls = _responses_tool_calls(response)
     return AssistantTurn(
@@ -564,6 +588,7 @@ def _complete_responses(
 
 
 def _stream_responses(
+    provider: OpenAIProvider,
     client: Any,
     model: str,
     messages: list[dict[str, Any]],
@@ -571,7 +596,7 @@ def _stream_responses(
     settings: dict[str, Any],
 ):
     kwargs = _responses_kwargs(model, messages, tools, settings)
-    events = client.responses.create(**kwargs, stream=True)
+    events = provider._create(client.responses, **kwargs, stream=True)
     text_parts: list[str] = []
     reasoning_parts: list[str] = []
     calls: dict[int, dict[str, str]] = {}

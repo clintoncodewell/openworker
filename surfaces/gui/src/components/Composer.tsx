@@ -3,8 +3,10 @@ import type { Attachment } from "../types";
 import { isPdfFile, readFile } from "../attach";
 import { getSettings, inspectPdf } from "../api";
 import { Dropdown, type Option } from "./Dropdown";
+import { AddFolderForm } from "./AddFolderForm";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
+import { useRoots } from "../useRoots";
 import {
   cancelDictation,
   getDictationLevel,
@@ -68,6 +70,7 @@ const mergeAttachments = (cur: Attachment[], add: Attachment[]): Attachment[] =>
 };
 
 interface Props {
+  sessionId: string;
   mode: string;
   model: string;
   models?: string[];
@@ -136,11 +139,14 @@ export function withCouncil(text: string, on: boolean): string {
 }
 
 export function Composer(props: Props) {
+  // A first root can persist a fresh Chat session as Cowork server-side; local persona sync is out of scope here.
+  const { addRoot } = useRoots(props.sessionId);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [council, setCouncil] = useState(() => councilStored(props.resetKey));
   const [dragging, setDragging] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [addingFolder, setAddingFolder] = useState(false);
   const [dictation, setDictation] = useState<DictationStatus | null>(null);
   const [dictationBusy, setDictationBusy] = useState<string | null>(null);
   const [dictationError, setDictationError] = useState<string | null>(null);
@@ -509,12 +515,28 @@ export function Composer(props: Props) {
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setAttachMenuOpen(false)} />
                 <div className="absolute z-40 bottom-full mb-1 left-0 min-w-[180px] rounded-xl border border-line bg-panel shadow-2xl py-1.5">
-                  {attachItem("image", "Photo or image", () => pickFiles("image/*"))}
-                  {attachItem("file", "PDF", () => pickFiles("application/pdf,.pdf"))}
-                  {attachItem(
-                    "fileCode",
-                    "Other files",
-                    () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
+                  {addingFolder ? (
+                    <AddFolderForm
+                      onAdd={async (path, writable) => {
+                        const ok = await addRoot(path, writable);
+                        if (ok !== false) setAttachMenuOpen(false);
+                        return ok;
+                      }}
+                      startOpen
+                      onDismiss={() => setAddingFolder(false)}
+                    />
+                  ) : (
+                    <>
+                      {attachItem("image", "Photo or image", () => pickFiles("image/*"))}
+                      {attachItem("file", "PDF", () => pickFiles("application/pdf,.pdf"))}
+                      {attachItem(
+                        "fileCode",
+                        "Other files",
+                        () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
+                      )}
+                      {props.workspace === undefined &&
+                        attachItem("folderPlus", "Folder…", () => setAddingFolder(true))}
+                    </>
                   )}
                 </div>
               </>
@@ -831,7 +853,7 @@ function ModeMenu({
 }
 
 // A row in the "+" attach menu.
-function attachItem(icon: "image" | "file" | "fileCode", label: string, onClick: () => void) {
+function attachItem(icon: "image" | "file" | "fileCode" | "folderPlus", label: string, onClick: () => void) {
   return (
     <button
       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left hover:bg-paper"

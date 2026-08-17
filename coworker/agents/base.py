@@ -17,6 +17,8 @@ from ..tools.todo import TodoList
 @dataclass
 class AgentContext:
     workspace: Optional[Path] = None
+    # Global, read-only personal knowledge root. It is never added to writable session roots.
+    brain_folder: Optional[Path] = None
     executor: Optional[Any] = None
     todo: Optional[TodoList] = None
     # Shared, mutable list of RootDir the session may touch (primary scratch + added folders).
