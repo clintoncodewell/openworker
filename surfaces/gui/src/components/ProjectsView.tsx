@@ -36,6 +36,14 @@ type ProjectSections = {
   openThreads: string;
 };
 
+// The one test for "is this a project, or an {ok:false} error payload?". Used by the
+// mutation guard AND by the list loader: getProject RESOLVES on a deleted project, so
+// Promise.allSettled's fulfilled-filter lets the error through and the malformed entry
+// only blows up later, when the card is clicked.
+function isProject(value: unknown): value is Project {
+  return !!value && typeof (value as Project).project_md === "string";
+}
+
 function projectSections(markdown: string): ProjectSections {
   const sections = new Map<string, string>();
   const headings = [...markdown.matchAll(/^##\s+(.+?)\s*$/gm)];
@@ -109,6 +117,7 @@ export function ProjectsView({ recentSessions, onOpenSession, onNewConversation 
       const full = settled
         .filter((result): result is PromiseFulfilledResult<Project> => result.status === "fulfilled")
         .map((result) => result.value)
+        .filter(isProject)
         .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
       setProjects(full);
     } catch {
@@ -305,7 +314,7 @@ function ProjectDetail({
   };
 
   const applyProject = (next: ProjectMutationResult) => {
-    if (!next || typeof (next as Project).project_md !== "string") {
+    if (!isProject(next)) {
       const message =
         next && typeof next === "object" && "error" in next && typeof next.error === "string"
           ? next.error

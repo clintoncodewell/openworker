@@ -187,7 +187,12 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
-  const newSessionProjectRef = useRef<string | null>(null);
+  // Bound to the session id it was minted for, NOT ambient. The socket effect re-runs on any
+  // sessionId change, so a bare ref leaked into unrelated sessions: click "New conversation" in
+  // a project, then click an existing chat before `ready` lands, and that existing chat got
+  // silently adopted into the project. A failed attach never cleared it either, which wedged
+  // every subsequent open behind a dead project id.
+  const newSessionProjectRef = useRef<{ sessionId: string; projectId: string } | null>(null);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -770,9 +775,19 @@ export function App() {
             sessionRef.current?.userMessage(p);
           }
         },
-        onClose: () => setConnected(false),
+        onClose: () => {
+          setConnected(false);
+          // Drop the pin on close too, not just on `ready`. A rejected attach closes the
+          // socket without ever sending `ready`, and a pin that survives makes this session
+          // retry the same doomed attach on every reconnect.
+          if (newSessionProjectRef.current?.sessionId === sessionId) {
+            newSessionProjectRef.current = null;
+          }
+        },
       },
-      newSessionProjectRef.current || undefined,
+      newSessionProjectRef.current?.sessionId === sessionId
+        ? newSessionProjectRef.current.projectId
+        : undefined,
     );
     sessionRef.current = session;
     return () => session.close();
@@ -938,7 +953,8 @@ export function App() {
 
   const startNewSession = (forAgent?: string, projectId?: string) => {
     const target = forAgent || agent;
-    newSessionProjectRef.current = projectId || null;
+    const nextSessionId = newId();
+    newSessionProjectRef.current = projectId ? { sessionId: nextSessionId, projectId } : null;
     setSurface("session"); // return to the conversation view if we were on a sub-view
     setItems([]);
     setStreaming("");
@@ -959,7 +975,7 @@ export function App() {
     // Knowledge family: a new conversation starts fresh (orphan) — clear the workspace so the
     // server provisions a NEW scratch dir for the new session id. Code keeps its repo.
     if (!gatesWorkspace(target)) setWorkspace(null);
-    setSessionId(newId());
+    setSessionId(nextSessionId);
   };
   // Inbox → session: the item carries its session's workspace/agent, so open it directly.
   // UX-026: 5s top-right toast when a SCHEDULED automation run starts (never for

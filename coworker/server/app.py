@@ -1681,9 +1681,18 @@ def create_app(manager: SessionManager) -> FastAPI:
             # A project-started conversation is the one intentional exception to empty sessions
             # staying ephemeral: persist it, then use the normal attachment path so both sides of
             # project membership and the live prompt context are updated before the composer opens.
+            # Check the project FIRST — saving before validating left an untitled empty session
+            # stranded in the sidebar whenever the attach then failed.
+            if manager.project_store.get(project_id) is None:
+                await ws.send_json(
+                    {"type": "error", "data": {"ok": False, "error": "no such project"}}
+                )
+                await ws.close()
+                return
             manager.save(session_id, engine)
             attached = manager.attach_project_session(project_id, session_id)
             if not attached.get("ok"):
+                manager.delete_session(session_id)  # no orphan for a half-done attach
                 await ws.send_json({"type": "error", "data": attached})
                 await ws.close()
                 return

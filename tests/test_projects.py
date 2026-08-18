@@ -449,6 +449,21 @@ def test_a_new_websocket_session_can_start_inside_a_project(tmp_path):
     assert manager.project_store.get(project.id).session_ids == ["project-chat"]
 
 
+def test_starting_a_session_in_a_dead_project_leaves_no_orphan(tmp_path):
+    """The save used to run BEFORE the project was checked, so a stale project id left an
+    untitled empty conversation stranded in the sidebar with no way to explain it."""
+    manager, client = _client(tmp_path, BriefModel(_update()))
+
+    with client.websocket_connect(
+        "/ws/session/ghost-chat?agent=cowork&project_id=no-such-project"
+    ) as ws:
+        message = ws.receive_json()
+
+    assert message["type"] == "error"
+    assert message["data"]["ok"] is False
+    assert manager.session_store.load("ghost-chat") is None
+
+
 def test_unknown_project_requests_return_a_clean_error(tmp_path):
     """A stale GUI (or a hand-typed curl) will name a project that is gone. The answer
     must be a structured error, never a traceback page."""
