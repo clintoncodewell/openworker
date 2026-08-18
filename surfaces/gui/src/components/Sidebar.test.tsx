@@ -442,7 +442,7 @@ describe("From Slack group (§31)", () => {
 });
 
 describe("New-session split button", () => {
-  it("collapses to a plain button when only one persona is enabled", async () => {
+  it("keeps the folder menu in solo mode without repeating the sole persona", async () => {
     stubFetch([
       {
         match: "/v1/personas",
@@ -454,10 +454,15 @@ describe("New-session split button", () => {
     const { container } = render(<Sidebar {...baseProps} />);
     await screen.findByText("incident watch");
 
-    // No ▾ — nothing to pick; the primary button starts the sole enabled persona.
-    await waitFor(() => expect(screen.queryByLabelText("Choose a persona")).toBeNull());
+    // The primary still starts the sole enabled persona.
     fireEvent.click(container.querySelector(".newsplit-primary")!);
     expect(baseProps.onNewSession).toHaveBeenCalledWith("cowork");
+
+    // The chevron remains useful for folder creation, without a redundant persona section.
+    fireEvent.click(screen.getByLabelText("New session options"));
+    expect(screen.queryByText("Start a session as")).toBeNull();
+    fireEvent.click(await screen.findByText("New folder"));
+    expect(await screen.findByPlaceholderText("Folder name")).toBeTruthy();
   });
 
   it("primary starts the last-used persona; the menu lists enabled personas + Manage personas…", async () => {
@@ -474,7 +479,7 @@ describe("New-session split button", () => {
     expect(baseProps.onNewSession).toHaveBeenCalledWith("cowork");
 
     // ▾ opens the persona menu: enabled personas appear, the disabled one does not, plus a manage entry.
-    fireEvent.click(screen.getByLabelText("Choose a persona"));
+    fireEvent.click(screen.getByLabelText("New session options"));
     const menu = (await screen.findByText("Start a session as")).closest(".newsplit-menu") as HTMLElement;
     const w = within(menu);
     expect(w.getByText("Ops")).toBeTruthy();
@@ -487,7 +492,7 @@ describe("New-session split button", () => {
     expect(baseProps.onNewSession).toHaveBeenCalledWith("ops");
 
     // "Manage personas…" opens the persona management surface.
-    fireEvent.click(screen.getByLabelText("Choose a persona"));
+    fireEvent.click(screen.getByLabelText("New session options"));
     fireEvent.click(await screen.findByText("Manage personas…"));
     expect(baseProps.onManagePersonas).toHaveBeenCalled();
   });
@@ -500,7 +505,7 @@ describe("New-session split button", () => {
     ]);
     render(<Sidebar {...baseProps} />);
     await screen.findByLabelText("Group and filter conversations");
-    fireEvent.click(screen.getByLabelText("Choose a persona"));
+    fireEvent.click(screen.getByLabelText("New session options"));
     const menu = (await screen.findByText("Start a session as")).closest(".newsplit-menu") as HTMLElement;
     expect(within(menu).getByText("Ops")).toBeTruthy();
     expect(within(menu).queryByText("Manage personas…")).toBeNull();

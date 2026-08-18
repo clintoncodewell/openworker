@@ -9,8 +9,10 @@ import {
   refreshProject,
   updateProject,
   type Project,
+  type ProjectMutationResult,
 } from "../api";
 import type { SessionInfo } from "../types";
+import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
@@ -88,9 +90,10 @@ function Shell({ children }: { children: React.ReactNode }) {
 interface Props {
   recentSessions: SessionInfo[];
   onOpenSession: (id: string, workspace: string, agent: string) => void;
+  onNewConversation: (projectId: string) => Promise<void> | void;
 }
 
-export function ProjectsView({ recentSessions, onOpenSession }: Props) {
+export function ProjectsView({ recentSessions, onOpenSession, onNewConversation }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [openProject, setOpenProject] = useState<Project | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -127,6 +130,7 @@ export function ProjectsView({ recentSessions, onOpenSession }: Props) {
         recentSessions={recentSessions}
         onChange={setOpenProject}
         onOpenSession={onOpenSession}
+        onNewConversation={onNewConversation}
         onBack={() => {
           setOpenProject(null);
           load();
@@ -259,6 +263,7 @@ function ProjectDetail({
   recentSessions,
   onChange,
   onOpenSession,
+  onNewConversation,
   onBack,
   onDelete,
 }: {
@@ -266,6 +271,7 @@ function ProjectDetail({
   recentSessions: SessionInfo[];
   onChange: (project: Project) => void;
   onOpenSession: (id: string, workspace: string, agent: string) => void;
+  onNewConversation: (projectId: string) => Promise<void> | void;
   onBack: () => void;
   onDelete: () => void;
 }) {
@@ -278,6 +284,8 @@ function ProjectDetail({
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [selectedSession, setSelectedSession] = useState("");
   const [addingSession, setAddingSession] = useState(false);
+  const [startingConversation, setStartingConversation] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     setName(project.name);
@@ -292,6 +300,24 @@ function ProjectDetail({
     );
   }, [project.session_ids, recentSessions]);
 
+  const showFailure = (value: unknown) => {
+    setError(value instanceof Error ? value.message : "Project could not be updated.");
+  };
+
+  const applyProject = (next: ProjectMutationResult) => {
+    if (!next || typeof (next as Project).project_md !== "string") {
+      const message =
+        next && typeof next === "object" && "error" in next && typeof next.error === "string"
+          ? next.error
+          : "Project could not be updated.";
+      setError(message);
+      return false;
+    }
+    setError("");
+    onChange(next as Project);
+    return true;
+  };
+
   const saveName = async () => {
     const next = name.trim();
     setEditingName(false);
@@ -300,26 +326,39 @@ function ProjectDetail({
       return;
     }
     if (next === project.name) return;
-    const updated = await updateProject(project.id, { name: next });
-    onChange(updated);
+    try {
+      applyProject(await updateProject(project.id, { name: next }));
+    } catch (failure) {
+      showFailure(failure);
+    }
   };
 
   const savePurpose = async () => {
     const next = purpose.trim();
     if (next === sections.purpose) return;
-    onChange(await updateProject(project.id, { purpose: next }));
+    try {
+      applyProject(await updateProject(project.id, { purpose: next }));
+    } catch (failure) {
+      showFailure(failure);
+    }
   };
 
   const saveInstructions = async () => {
     const next = instructions.trim();
     if (next === (project.instructions || "")) return;
-    onChange(await updateProject(project.id, { instructions: next }));
+    try {
+      applyProject(await updateProject(project.id, { instructions: next }));
+    } catch (failure) {
+      showFailure(failure);
+    }
   };
 
   const refresh = async () => {
     setRefreshing(true);
     try {
-      onChange(await refreshProject(project.id));
+      applyProject(await refreshProject(project.id));
+    } catch (failure) {
+      showFailure(failure);
     } finally {
       setRefreshing(false);
     }
@@ -329,10 +368,25 @@ function ProjectDetail({
     if (!selectedSession) return;
     setAddingSession(true);
     try {
-      onChange(await addProjectSession(project.id, selectedSession));
-      setSelectedSession("");
+      if (applyProject(await addProjectSession(project.id, selectedSession))) {
+        setSelectedSession("");
+      }
+    } catch (failure) {
+      showFailure(failure);
     } finally {
       setAddingSession(false);
+    }
+  };
+
+  const startConversation = async () => {
+    if (startingConversation) return;
+    setStartingConversation(true);
+    setError("");
+    try {
+      await onNewConversation(project.id);
+    } catch (failure) {
+      showFailure(failure);
+      setStartingConversation(false);
     }
   };
 
@@ -374,6 +428,11 @@ function ProjectDetail({
             <h2 className="text-[18px] font-semibold tracking-tight">{project.name}</h2>
           </button>
         )}
+        {error && (
+          <p className="mt-2 text-[12px] text-danger" role="alert">
+            {error}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4">
@@ -410,6 +469,14 @@ function ProjectDetail({
 
         <section className={CARD + " p-4"}>
           <h3 className="text-[13px] font-semibold">Conversations</h3>
+          <button
+            className={BTN_ACCENT + " mt-3 inline-flex items-center gap-2 hover:opacity-90"}
+            disabled={startingConversation}
+            onClick={startConversation}
+          >
+            <Icon name="plus" size={14} className="shrink-0" />
+            {startingConversation ? "Starting…" : "New conversation"}
+          </button>
           {project.sessions.length === 0 ? (
             <p className={HELP}>No conversations yet.</p>
           ) : (
@@ -425,23 +492,26 @@ function ProjectDetail({
               ))}
             </div>
           )}
-          <div className="flex gap-2 mt-3">
-            <select
-              className={INPUT}
-              aria-label="Recent conversation"
-              value={selectedSession}
-              onChange={(event) => setSelectedSession(event.target.value)}
-            >
-              <option value="">Choose a recent conversation</option>
-              {unattached.map((session) => (
-                <option key={session.session_id} value={session.session_id}>
-                  {session.title || "Untitled conversation"}
-                </option>
-              ))}
-            </select>
-            <button className={BTN} disabled={!selectedSession || addingSession} onClick={addSession}>
-              {addingSession ? "Adding…" : "Add"}
-            </button>
+          <div className="mt-4 pt-3 border-t border-line">
+            <p className="text-[11.5px] text-muted mb-2">Or add an existing conversation</p>
+            <div className="flex gap-2">
+              <select
+                className={INPUT}
+                aria-label="Recent conversation"
+                value={selectedSession}
+                onChange={(event) => setSelectedSession(event.target.value)}
+              >
+                <option value="">Choose a recent conversation</option>
+                {unattached.map((session) => (
+                  <option key={session.session_id} value={session.session_id}>
+                    {session.title || "Untitled conversation"}
+                  </option>
+                ))}
+              </select>
+              <button className={BTN} disabled={!selectedSession || addingSession} onClick={addSession}>
+                {addingSession ? "Adding…" : "Add"}
+              </button>
+            </div>
           </div>
         </section>
 

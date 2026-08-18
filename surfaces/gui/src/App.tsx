@@ -187,6 +187,7 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  const newSessionProjectRef = useRef<string | null>(null);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -577,6 +578,7 @@ export function App() {
       switch (ev.type) {
         case "ready":
           setConnected(true);
+          newSessionProjectRef.current = null;
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
           // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
@@ -752,20 +754,26 @@ export function App() {
       }
     };
 
-    const session = new Session(sessionId, workspace || "", agent, {
-      onEvent: handleEvent,
-      onOpen: () => {
-        setConnected(true);
-        // Auto-send the task prompt once a "Run now" session connects.
-        const p = pendingPromptRef.current;
-        if (p) {
-          pendingPromptRef.current = null;
-          setItems((prev) => [...prev, { kind: "user", text: p, ts: Date.now() / 1000 }]);
-          sessionRef.current?.userMessage(p);
-        }
+    const session = new Session(
+      sessionId,
+      workspace || "",
+      agent,
+      {
+        onEvent: handleEvent,
+        onOpen: () => {
+          setConnected(true);
+          // Auto-send the task prompt once a "Run now" session connects.
+          const p = pendingPromptRef.current;
+          if (p) {
+            pendingPromptRef.current = null;
+            setItems((prev) => [...prev, { kind: "user", text: p, ts: Date.now() / 1000 }]);
+            sessionRef.current?.userMessage(p);
+          }
+        },
+        onClose: () => setConnected(false),
       },
-      onClose: () => setConnected(false),
-    });
+      newSessionProjectRef.current || undefined,
+    );
     sessionRef.current = session;
     return () => session.close();
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
@@ -928,8 +936,9 @@ export function App() {
     sessionRef.current?.setModel(m);
   };
 
-  const startNewSession = (forAgent?: string) => {
+  const startNewSession = (forAgent?: string, projectId?: string) => {
     const target = forAgent || agent;
+    newSessionProjectRef.current = projectId || null;
     setSurface("session"); // return to the conversation view if we were on a sub-view
     setItems([]);
     setStreaming("");
@@ -1382,7 +1391,11 @@ export function App() {
         onPeekLeave={() => setNavPeek(false)}
       />
       {surface === "projects" ? (
-        <ProjectsView recentSessions={sessions} onOpenSession={selectSession} />
+        <ProjectsView
+          recentSessions={sessions}
+          onOpenSession={selectSession}
+          onNewConversation={(projectId) => startNewSession(undefined, projectId)}
+        />
       ) : surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}

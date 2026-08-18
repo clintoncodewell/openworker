@@ -93,8 +93,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const renderProjects = (recentSessions: SessionInfo[] = []) =>
-  render(<ProjectsView recentSessions={recentSessions} onOpenSession={vi.fn()} />);
+const renderProjects = (
+  recentSessions: SessionInfo[] = [],
+  onNewConversation = vi.fn(),
+) =>
+  render(
+    <ProjectsView
+      recentSessions={recentSessions}
+      onOpenSession={vi.fn()}
+      onNewConversation={onNewConversation}
+    />,
+  );
 
 async function openFirstProject() {
   renderProjects([RECENT_SESSION]);
@@ -169,7 +178,7 @@ describe("ProjectsView", () => {
 
   it("refreshes the brief and shows a pending state", async () => {
     records = [project("alpha", "Alpha")];
-    let resolveRefresh!: (value: api.Project) => void;
+    let resolveRefresh!: (value: api.ProjectMutationResult) => void;
     vi.mocked(api.refreshProject).mockImplementation(
       () => new Promise((resolve) => { resolveRefresh = resolve; }),
     );
@@ -204,5 +213,35 @@ describe("ProjectsView", () => {
       expect(api.addProjectSession).toHaveBeenCalledWith("alpha", "recent-1"),
     );
   });
-});
 
+  it("keeps rendering and shows the server error when attach returns an error payload", async () => {
+    records = [project("alpha", "Alpha")];
+    vi.mocked(api.addProjectSession).mockResolvedValue({
+      ok: false,
+      error: "no such project",
+    });
+    await openFirstProject();
+
+    fireEvent.change(screen.getByLabelText("Recent conversation"), {
+      target: { value: "recent-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("no such project");
+    expect(screen.getByRole("heading", { name: "Alpha" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New conversation" })).toBeTruthy();
+  });
+
+  it("starts a new project conversation through the supplied app callback", async () => {
+    records = [project("alpha", "Alpha")];
+    const onNewConversation = vi.fn(() => new Promise<void>(() => {}));
+    renderProjects([RECENT_SESSION], onNewConversation);
+    fireEvent.click(await screen.findByText("Alpha"));
+
+    fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+    expect(onNewConversation).toHaveBeenCalledWith("alpha");
+    expect(
+      (screen.getByRole("button", { name: "Starting…" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+});

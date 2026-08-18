@@ -365,6 +365,22 @@ def test_the_project_block_reaches_the_system_prompt(tmp_path):
     assert "<openworker-project>" not in plain.messages[0]["content"]
 
 
+def test_attach_and_refresh_return_the_full_updated_project(tmp_path):
+    manager = SessionManager(workspace=tmp_path, provider=BriefModel(_update(where="Fresh")))
+    project = manager.project_store.create("Launch", purpose="Ship it")
+    manager.session_store.save(_session("launch-chat", tmp_path))
+
+    attached = manager.attach_project_session(project.id, "launch-chat")
+    assert attached["ok"] is True
+    assert attached["session_ids"] == ["launch-chat"]
+    assert "Ship it" in attached["project_md"]
+
+    refreshed = manager.refresh_project(project.id)
+    assert refreshed["ok"] is True
+    assert refreshed["session_ids"] == ["launch-chat"]
+    assert "Fresh" in refreshed["project_md"]
+
+
 # -- HTTP ----------------------------------------------------------------------------
 
 
@@ -399,9 +415,17 @@ def test_projects_http_round_trip(tmp_path):
         f"/v1/projects/{project_id}/sessions", json={"session_id": "reno-chat"}
     )
     assert attach.status_code == 200
-    assert attach.json()["ok"] is True
+    attached = attach.json()
+    assert attached["ok"] is True
+    assert attached["session_ids"] == ["reno-chat"]
+    assert "Renovate the kitchen" in attached["project_md"]
     assert manager.session_store.load("reno-chat").project_id == project_id
     assert client.get(f"/v1/projects/{project_id}").json()["session_ids"] == ["reno-chat"]
+
+    refreshed = client.post(f"/v1/projects/{project_id}/refresh").json()
+    assert refreshed["ok"] is True
+    assert refreshed["session_ids"] == ["reno-chat"]
+    assert "project_md" in refreshed
 
     deleted = client.delete(f"/v1/projects/{project_id}")
     assert deleted.status_code == 200
@@ -410,6 +434,19 @@ def test_projects_http_round_trip(tmp_path):
     assert manager.project_store.get(project_id) is None
     # deleting the project releases its sessions, so a rebuilt engine has no stale block
     assert manager.session_store.load("reno-chat").project_id is None
+
+
+def test_a_new_websocket_session_can_start_inside_a_project(tmp_path):
+    manager, client = _client(tmp_path, BriefModel(_update()))
+    project = manager.project_store.create("Launch")
+
+    with client.websocket_connect(
+        f"/ws/session/project-chat?agent=cowork&project_id={project.id}"
+    ) as ws:
+        assert ws.receive_json()["type"] == "ready"
+
+    assert manager.session_store.load("project-chat").project_id == project.id
+    assert manager.project_store.get(project.id).session_ids == ["project-chat"]
 
 
 def test_unknown_project_requests_return_a_clean_error(tmp_path):

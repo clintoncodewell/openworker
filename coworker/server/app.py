@@ -1468,6 +1468,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             return
         await ws.accept()
         agent = ws.query_params.get("agent") or "code"
+        project_id = ws.query_params.get("project_id") or ""
 
         # All four interactive prompts (approval / question / directory / plan) are parked as Inbox
         # items and awaited via inbox.wait — so they survive a dropped socket (redelivered on
@@ -1676,6 +1677,16 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
             await ws.close()
             return
+        if project_id:
+            # A project-started conversation is the one intentional exception to empty sessions
+            # staying ephemeral: persist it, then use the normal attachment path so both sides of
+            # project membership and the live prompt context are updated before the composer opens.
+            manager.save(session_id, engine)
+            attached = manager.attach_project_session(project_id, session_id)
+            if not attached.get("ok"):
+                await ws.send_json({"type": "error", "data": attached})
+                await ws.close()
+                return
         await ws.send_json(
             {
                 "type": "ready",

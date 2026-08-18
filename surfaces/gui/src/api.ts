@@ -1854,8 +1854,16 @@ export class Session {
   // against the first message being dropped if the user sends in the connect window.
   private outbox: object[] = [];
 
-  constructor(sessionId: string, workspace: string, agent: string, handlers: Handlers) {
-    const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
+  constructor(
+    sessionId: string,
+    workspace: string,
+    agent: string,
+    handlers: Handlers,
+    projectId?: string,
+  ) {
+    const params = new URLSearchParams({ workspace, agent });
+    if (projectId) params.set("project_id", projectId);
+    const q = `?${params.toString()}`;
     this.ws = new WebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
     this.ws.onmessage = (e) => handlers.onEvent(JSON.parse(e.data));
     this.ws.onopen = () => {
@@ -2072,6 +2080,8 @@ export type Project = {
   updated_at: string;
 };
 
+export type ProjectMutationResult = Project | { ok: false; error?: string };
+
 export const PROJECTS_CHANGED = "ocw-projects-changed";
 export const announceProjectsChanged = () => window.dispatchEvent(new Event(PROJECTS_CHANGED));
 
@@ -2105,7 +2115,7 @@ export async function getProject(id: string): Promise<Project> {
 export async function updateProject(
   id: string,
   patch: { name?: string; purpose?: string; instructions?: string },
-): Promise<Project> {
+): Promise<ProjectMutationResult> {
   const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2121,7 +2131,10 @@ export async function deleteProject(id: string): Promise<{ ok: boolean; id: stri
   return res.json();
 }
 
-export async function addProjectSession(id: string, sessionId: string): Promise<Project> {
+export async function addProjectSession(
+  id: string,
+  sessionId: string,
+): Promise<ProjectMutationResult> {
   const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2130,7 +2143,7 @@ export async function addProjectSession(id: string, sessionId: string): Promise<
   return res.json();
 }
 
-export async function refreshProject(id: string): Promise<Project> {
+export async function refreshProject(id: string): Promise<ProjectMutationResult> {
   const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}/refresh`, {
     method: "POST",
   });
