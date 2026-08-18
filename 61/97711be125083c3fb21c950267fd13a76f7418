@@ -1,0 +1,54 @@
+tests/test_projects.py
+  s_a2d4e30c00bb64::t_52c8b8d4de18fd 368-383
+  s_a2d4e30c00bb64::t_43a74013609217 418-421,425-429,439-449
+  s_a2d4e30c00bb64::t_8b0f4e378845ff 450-451
+surfaces/gui/src/components/Sidebar.test.tsx
+  s_a2d4e30c00bb64::t_bb0c1c4de596df 445,457,460-465,482,495,508
+surfaces/gui/src/components/ProjectsView.tsx
+  s_a2d4e30c00bb64::t_9ba1023b5d7bfd 12,15,93,96,133,266,274,287-288,303-308,314-320,329-333,339-343,349-353,359-361,371-375,381-391,472-479,495-497,514
+  s_a2d4e30c00bb64::t_4274e95f909ae6 309-313
+  s_a2d4e30c00bb64::t_b0c0f04ed0550c 431-435,498-513
+  s_7772881399175a::t_760898b75edae1 392
+surfaces/gui/src/components/Sidebar.tsx
+  s_a2d4e30c00bb64::t_b0c0f04ed0550c 1921
+  s_a2d4e30c00bb64::t_d0777026bd10f7 1492-1495,1903,1909,1914-1915,1926-1933,1939-1980
+coworker/server/app.py
+  s_a2d4e30c00bb64::t_43a74013609217 1471,1680-1689
+surfaces/gui/src/api.ts
+  s_a2d4e30c00bb64::t_1f74f036826d37 1857-1866,2083-2084,2118,2146
+  s_a2d4e30c00bb64::t_b0c0f04ed0550c 2134-2137
+surfaces/gui/src/components/ProjectsView.test.tsx
+  s_a2d4e30c00bb64::t_d9dc62b6ff1df8 96-106,181,217-229,231-242,246-247
+  s_a2d4e30c00bb64::t_8a18c30dd24ad5 230
+  s_a2d4e30c00bb64::t_b0c0f04ed0550c 243-245
+coworker/server/manager.py
+  s_a2d4e30c00bb64::t_b0c0f04ed0550c 1969,1997
+  s_a2d4e30c00bb64::t_43a74013609217 1968,1970,1996,1998-1999
+surfaces/gui/src/App.tsx
+  s_a2d4e30c00bb64::t_27e115fb427736 190,581,939,941,1394-1398
+  s_a2d4e30c00bb64::t_b0c0f04ed0550c 757-773,775-776
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "6197711be125083c3fb21c950267fd13a76f7418",
+  "prompts": {},
+  "sessions": {
+    "s_7772881399175a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aeee2866-7dc3-4044-a187-db4d122f8856",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_a2d4e30c00bb64": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0121b-2622-7ae1-9247-508e41851378",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
