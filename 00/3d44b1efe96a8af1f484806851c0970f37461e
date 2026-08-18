@@ -1,0 +1,114 @@
+surfaces/gui/src/components/ProjectsView.test.tsx
+  s_adc401e7dedc71::t_41b44e8696c4e6 75
+  s_adc401e7dedc71::t_ae2580381681a1 32
+  s_3f16b4dbfd2cda::t_d98c34ed9916a4 60
+  s_adc401e7dedc71::t_222b6caf3d901c 5,183-199
+  s_f7ac55aec4fbbb::t_32d78c7bb8edd3 200-201
+coworker/projects/store.py
+  s_adc401e7dedc71::t_365dfa091a3a69 49,172,183,196-203,214,251,276
+coworker/server/manager.py
+  s_adc401e7dedc71::t_0e202a7e1c71dc 1963-1966,2018-2021
+  s_adc401e7dedc71::t_94fb435cdaf627 1913-1916,1921
+  s_adc401e7dedc71::t_365dfa091a3a69 323-326,344-349,351-358,384-386,1902,1942-1947,1956,1961-1962,1967-1968,1971-1983
+  s_3f16b4dbfd2cda::t_18d8893b1fa428 1885-1888
+  s_cfcf777147c85b::t_eb4ef6404a87d8 1984
+tests/test_projects.py
+  s_adc401e7dedc71::t_3c84bc51e9f50a 490,493,495,497-499,501-503,505-507
+  s_adc401e7dedc71::t_f470774164a5af 440,445,448,452-454,461
+  s_adc401e7dedc71::t_365dfa091a3a69 439,441-444,446-447,449-451,455-460,462-476,491-492,494,496,500,504
+  s_f226f5ce3c4964::t_08f5a89360999c 508-509
+coworker/server/app.py
+  s_adc401e7dedc71::t_365dfa091a3a69 1472-1478,1662
+  s_adc401e7dedc71::t_d7dba48c1a8fbd 1705
+surfaces/gui/src/types.ts
+  s_adc401e7dedc71::t_ae2580381681a1 55
+surfaces/gui/src/components/RightRail.tsx
+  s_adc401e7dedc71::t_b5d11a290272fe 56,75,243
+surfaces/gui/src/components/Composer.tsx
+  s_3f16b4dbfd2cda::t_03eaae0c123438 361
+  s_adc401e7dedc71::t_b5d11a290272fe 100,575,577-585
+  s_adc401e7dedc71::t_f4bfde0e99a9f7 4,89,157,340-347,354-360,362-374,401,406,774-775
+  s_3f16b4dbfd2cda::t_510a66001d4c6b 348-353
+surfaces/gui/src/components/Sidebar.tsx
+  s_3f16b4dbfd2cda::t_bb0602a6317690 1784-1820
+  s_adc401e7dedc71::t_61837557a14d37 160,245,247,250,252-255,545-547,1043-1051,1058-1103,1108-1122,1124-1131,1133-1138,1619,1645,1821,1824-1825,1848-1849,1852
+  s_adc401e7dedc71::t_5d56adcc6ec727 1052-1057
+  s_3f16b4dbfd2cda::t_62557b5a4149bb 273-274
+  s_3f16b4dbfd2cda::t_dd4db50ef086e6 1123,1132
+  s_3f16b4dbfd2cda::t_e558857095b283 1104-1107
+  s_3f16b4dbfd2cda::t_9d14d503f8378a 244,248-249,251
+  s_3f16b4dbfd2cda::t_1db30e58a8fa46 178-179
+  s_adc401e7dedc71::t_cbc108d505bb8e 1615
+  s_3f16b4dbfd2cda::t_53d0f458cb5bd9 27
+surfaces/gui/src/components/Sidebar.test.tsx
+  s_adc401e7dedc71::t_227d5b093aa9d1 146-169,205-231,239-255
+  s_3f16b4dbfd2cda::t_4b230345752e5b 181,183,185
+  s_3f16b4dbfd2cda::t_51a2cbb87b4f3a 232-238
+  s_3f16b4dbfd2cda::t_b83740e9d03a9f 170-180,182,184,186-187,256
+  s_3f16b4dbfd2cda::t_5840b8458a3965 257-258
+surfaces/gui/src/App.tsx
+  s_adc401e7dedc71::t_b5d11a290272fe 1696,1756
+  s_adc401e7dedc71::t_d7dba48c1a8fbd 591-595
+  s_adc401e7dedc71::t_f4bfde0e99a9f7 1689
+  s_adc401e7dedc71::t_61837557a14d37 205,1396-1399,1422
+surfaces/gui/src/components/AccessSection.tsx
+  s_adc401e7dedc71::t_b5d11a290272fe 55,66,430-441
+surfaces/gui/src/api.ts
+  s_adc401e7dedc71::t_ae2580381681a1 2078,2103,2120
+  s_3f16b4dbfd2cda::t_36ba81e7f81635 2068
+surfaces/gui/src/components/Composer.council.test.tsx
+  s_adc401e7dedc71::t_f4bfde0e99a9f7 7,29-32,97-139
+  s_adc401e7dedc71::t_9bb8f5852165c8 140
+surfaces/gui/src/components/ProjectsView.tsx
+  s_adc401e7dedc71::t_5d56adcc6ec727 1,112,126-127
+  s_adc401e7dedc71::t_61837557a14d37 103,106,128-129,140
+  s_adc401e7dedc71::t_ae2580381681a1 15,299-300,312,337,376-397,481-514
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "003d44b1efe96a8af1f484806851c0970f37461e",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_adc401e7dedc71": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01278-3eed-7713-a771-48d5fad0f202",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_cfcf777147c85b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a012a0-8392-74e0-82cb-3ed9db962eaf",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_f226f5ce3c4964": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "22df69ff-42e4-4fe1-85f6-901f1f64a78b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    },
+    "s_f7ac55aec4fbbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1525cd93-e4ba-44b0-9472-1ea3f27d81ea",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
