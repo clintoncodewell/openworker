@@ -24,6 +24,7 @@ import {
   type MagicSortApplyResult,
   type MagicSortProposal,
   type Persona,
+  type ProjectSummary,
   type RecentWorkspace,
   type SurfaceVisibility,
 } from "../api";
@@ -156,7 +157,7 @@ interface Props {
   onOpenPersona: (id: string) => void;
   onManagePersonas: () => void;
   onOpenScheduled: () => void;
-  onOpenProjects: () => void;
+  onOpenProjects: (projectId?: string) => void;
   // Scheduled-band row click: open the Automations surface ON that automation (UX-023).
   onOpenAutomation: (id: string) => void;
   onOpenIntegrations: () => void;
@@ -173,6 +174,8 @@ interface Props {
   onCollapse?: () => void;
   onPeekLeave?: () => void;
 }
+
+const UNFILED_KEY = "__unfiled__";
 
 // Compact age for project session rows: "now" / "5m" / "6h" / "3d" / "2w" / "4mo" / "2y".
 const compactAge = (iso?: string | null): string => {
@@ -238,9 +241,18 @@ export function Sidebar(props: Props) {
       window.removeEventListener(AUTOMATIONS_CHANGED, load);
     };
   }, []);
-  const [projectCount, setProjectCount] = useState(0);
+  const [topicProjects, setTopicProjects] = useState<ProjectSummary[]>([]);
+  const [collapsedTopicProjects, setCollapsedTopicProjects] = useState<Set<string>>(new Set());
   useEffect(() => {
-    const load = () => getProjects().then((items) => setProjectCount(items.length)).catch(() => {});
+    const load = async () => {
+      // The list route carries session_ids, so one request covers the whole band. Fanning
+      // out to getProject() per project re-reads each project's markdown and session list.
+      try {
+        setTopicProjects(await getProjects());
+      } catch {
+        setTopicProjects([]);
+      }
+    };
     load();
     window.addEventListener(PROJECTS_CHANGED, load);
     return () => window.removeEventListener(PROJECTS_CHANGED, load);
@@ -258,6 +270,8 @@ export function Sidebar(props: Props) {
   const [confirmDelId, setConfirmDelId] = useState<string | null>(null);
   const [confirmSweep, setConfirmSweep] = useState(false);
   const [folders, setFolders] = useState<ChatFolder[]>([]);
+  // Unfiled is not a stored folder, so it borrows collapsedFolders under a sentinel key
+  // rather than carrying its own boolean. Folder ids are uuids, so no collision.
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [folderMenu, setFolderMenu] = useState<{
     id: string;
@@ -528,7 +542,9 @@ export function Sidebar(props: Props) {
   // persona group / project list (matching the flat layout's Recent, which also drops pinned).
   const all = props.sessions.filter((s) => s.agent === browseKey && !s.session_id.startsWith("__"));
   const mine = all.filter((s) => !s.archived && !s.pinned);
-  const archived = all.filter((s) => s.archived);
+  const allArchived = props.sessions.filter(
+    (s) => s.archived && !s.session_id.startsWith("__") && personaVisible(s.agent),
+  );
   // Only PROJECT-SCOPED personas group sessions by project (git-bound Code, project-bound Ops).
   // Scratch/deliverable conversations are orphan (each has its own per-conversation scratch dir),
   // so they list flat. Workspace-aware (not id-aware) — any git/project persona gets Projects.
@@ -1024,6 +1040,102 @@ export function Sidebar(props: Props) {
       </div>
     ) : null;
 
+  const projectsBand = () =>
+    topicProjects.length > 0 ? (
+      <div data-testid="projects-band">
+        <div className="px-1.5 text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1">
+          Projects
+        </div>
+        <div className="space-y-1.5">
+          {topicProjects.map((project) => {
+            const expanded = !collapsedTopicProjects.has(project.id);
+            const knownSessionIds = new Set(project.session_ids);
+            const projectSessions = props.sessions.filter(
+              (session) =>
+                !session.archived &&
+                (session.project_id === project.id || knownSessionIds.has(session.session_id)),
+            );
+            return (
+              <div
+                key={project.id}
+                className={expanded ? "rounded-xl bg-paper/70 overflow-hidden" : ""}
+                data-testid={`project-folder-${project.id}`}
+              >
+                <div className="flex items-center px-2 py-1">
+                  <button
+                    className="min-w-0 flex-1 flex items-center gap-2 py-1 text-left rounded-lg hover:text-accent active:opacity-70"
+                    onClick={() => props.onOpenProjects(project.id)}
+                    title={`Open project ${project.name}`}
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+                      {project.name}
+                    </span>
+                    <LiveDot state={folderLiveness(projectSessions)} />
+                    <AttnBadge n={folderAttention(projectSessions)} />
+                  </button>
+                  <button
+                    className="w-10 h-10 -my-1 grid place-items-center rounded-lg text-faint hover:text-ink hover:bg-panel active:bg-line/60"
+                    aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
+                    onClick={() =>
+                      setCollapsedTopicProjects((current) => toggleSet(current, project.id))
+                    }
+                  >
+                    <Icon name={expanded ? "chevronDown" : "chevronRight"} size={15} />
+                  </button>
+                </div>
+                {expanded && (
+                  <div className="px-1.5 pb-1.5 space-y-0.5">
+                    {projectSessions.length > 0 ? (
+                      projectSessions.map((session) => sessionRow(session, { showTime: true }))
+                    ) : (
+                      <div className="px-2 py-1.5 text-[12px] text-faint">No conversations</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    ) : null;
+
+  const archiveFolder = () => {
+    if (allArchived.length === 0) return null;
+    // Archive obeys the search box like every other band — without this a query returns
+    // its matches plus the entire archive, which reads as the search being broken.
+    const shown = allArchived.filter(matches);
+    if (normalizedQuery && shown.length === 0) return null;
+    return (
+      <div
+        className={showArchived ? "rounded-xl bg-paper/70 overflow-hidden" : ""}
+        data-testid="archive-folder"
+      >
+        <button
+          className={
+            "w-full flex items-center gap-2 px-2 py-2 text-left select-none " +
+            (showArchived ? "" : "rounded-lg hover:bg-paper active:bg-line/60")
+          }
+          onClick={() => setShowArchived((value) => !value)}
+        >
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+            Archive
+          </span>
+          <span className="text-[11px] text-faint tabular-nums">{shown.length}</span>
+          <Icon
+            name={showArchived ? "chevronDown" : "chevronRight"}
+            size={15}
+            className="text-faint shrink-0"
+          />
+        </button>
+        {showArchived && (
+          <div className="px-1.5 pb-1.5 space-y-0.5">
+            {shown.map((session) => sessionRow(session, { showTime: true }))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const magicSortPanel = () => {
     if (magicSortState === "idle") return null;
     const selectedCount = magicSortProposals.length - magicSortExcluded.size;
@@ -1442,20 +1554,6 @@ export function Sidebar(props: Props) {
           </div>
         )}
 
-        {archived.length > 0 && (
-          <div className="mt-2 pt-1.5 border-t border-line">
-            <button
-              className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-[12px] text-faint hover:text-muted"
-              onClick={() => setShowArchived((v) => !v)}
-            >
-              <Icon name={showArchived ? "chevronDown" : "chevronRight"} size={13} className="shrink-0" />
-              Archived ({archived.length})
-            </button>
-            {showArchived && (
-              <div className="space-y-0.5 mt-0.5">{archived.filter(matches).map((s) => sessionRow(s))}</div>
-            )}
-          </div>
-        )}
       </div>
     );
   };
@@ -1514,11 +1612,11 @@ export function Sidebar(props: Props) {
             (props.projectsActive ? "text-ink bg-paper" : "text-muted")
           }
           data-testid="nav-projects"
-          onClick={props.onOpenProjects}
+          onClick={() => props.onOpenProjects()}
         >
           <Icon name="folder" size={15} className="shrink-0" />
           <span className="flex-1">Projects</span>
-          <ProjectCountBadge n={projectCount} />
+          <ProjectCountBadge n={topicProjects.length} />
         </button>
       </div>
 
@@ -1544,6 +1642,7 @@ export function Sidebar(props: Props) {
         <div className="space-y-4">
           {pinnedBand()}
           {scheduledBand()}
+          {projectsBand()}
           <div>
             {recentHeader()}
             {layout === "grouped" ? (
@@ -1682,27 +1781,48 @@ export function Sidebar(props: Props) {
                   </div>
                 );
               })}
-              <div className="rounded-xl bg-paper/70 overflow-hidden" data-testid="folder-unfiled">
-                <div className="flex items-center gap-2 px-2 py-2 select-none">
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
-                    Unfiled
-                  </span>
-                  <LiveDot state={folderLiveness(unfiledSessions)} />
-                  <AttnBadge n={folderAttention(unfiledSessions)} />
-                  {/* No chevron: Unfiled is always open, so an affordance that implies
-                      collapsing would be lying about what a click does. */}
-                </div>
-                <div className="px-1.5 pb-1.5 space-y-0.5">
-                  {unfiledSessions.length > 0 ? (
-                    unfiledSessions.map((session) => sessionRow(session, { showTime: true }))
-                  ) : (
-                    <div className="px-2 py-1.5 text-[12px] text-faint">No conversations</div>
-                  )}
-                </div>
-              </div>
+              {(() => {
+                const expanded = !collapsedFolders.has(UNFILED_KEY);
+                return (
+                  <div
+                    className={expanded ? "rounded-xl bg-paper/70 overflow-hidden" : ""}
+                    data-testid="folder-unfiled"
+                  >
+                    <div
+                      className={
+                        "flex items-center gap-2 px-2 py-2 cursor-pointer select-none " +
+                        (expanded ? "" : "rounded-lg hover:bg-paper active:bg-line/60")
+                      }
+                      onClick={() => setCollapsedFolders((current) => toggleSet(current, UNFILED_KEY))}
+                    >
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+                        Unfiled
+                      </span>
+                      <LiveDot state={folderLiveness(unfiledSessions)} />
+                      <AttnBadge n={folderAttention(unfiledSessions)} />
+                      <Icon
+                        name={expanded ? "chevronDown" : "chevronRight"}
+                        size={15}
+                        className="text-faint shrink-0"
+                      />
+                    </div>
+                    {expanded && (
+                      <div className="px-1.5 pb-1.5 space-y-0.5">
+                        {unfiledSessions.length > 0 ? (
+                          unfiledSessions.map((session) => sessionRow(session, { showTime: true }))
+                        ) : (
+                          <div className="px-2 py-1.5 text-[12px] text-faint">No conversations</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              {archiveFolder()}
             </div>
             ) : (
-            <div className="space-y-0.5">
+            <div className="space-y-1.5">
+              <div className="space-y-0.5">
               {recentSessions.length === 0 ? (
                 <div className="px-2 py-1.5 text-[12px] text-faint leading-snug">
                   {normalizedQuery ? "No matching conversations." : "No conversations yet."}
@@ -1725,8 +1845,11 @@ export function Sidebar(props: Props) {
                   )}
                 </>
               )}
+              </div>
+              {archiveFolder()}
             </div>
             )}
+            {layout === "grouped" && <div className="mt-1.5">{archiveFolder()}</div>}
           </div>
         </div>
       </div>

@@ -1469,6 +1469,13 @@ def create_app(manager: SessionManager) -> FastAPI:
         await ws.accept()
         agent = ws.query_params.get("agent") or "code"
         project_id = ws.query_params.get("project_id") or ""
+        project = manager.project_store.get(project_id) if project_id else None
+        if project_id and project is None:
+            await ws.send_json(
+                {"type": "error", "data": {"ok": False, "error": "no such project"}}
+            )
+            await ws.close()
+            return
 
         # All four interactive prompts (approval / question / directory / plan) are parked as Inbox
         # items and awaited via inbox.wait — so they survive a dropped socket (redelivered on
@@ -1652,7 +1659,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             if pend:
                 manager.inbox.resolve(pend[0].id, resolution)
 
-        workspace = ws.query_params.get("workspace")
+        workspace = project.workspace if project and project.workspace else ws.query_params.get("workspace")
         mcp_tools = await manager.prepare_mcp_tools(
             session_id, workspace=workspace, agent=agent
         )
@@ -1683,12 +1690,6 @@ def create_app(manager: SessionManager) -> FastAPI:
             # project membership and the live prompt context are updated before the composer opens.
             # Check the project FIRST — saving before validating left an untitled empty session
             # stranded in the sidebar whenever the attach then failed.
-            if manager.project_store.get(project_id) is None:
-                await ws.send_json(
-                    {"type": "error", "data": {"ok": False, "error": "no such project"}}
-                )
-                await ws.close()
-                return
             manager.save(session_id, engine)
             attached = manager.attach_project_session(project_id, session_id)
             if not attached.get("ok"):
@@ -1701,6 +1702,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                 "type": "ready",
                 "data": {
                     "session_id": session_id,
+                    "project_id": getattr(engine, "project_id", None),
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
                     "mode": engine.permissions.mode.value,

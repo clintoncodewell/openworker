@@ -52,6 +52,7 @@ export function AccessSection({
   sessionId,
   personaId,
   projectScoped,
+  projectControlled,
   workspace,
   branch,
   scratchPrimary,
@@ -62,6 +63,7 @@ export function AccessSection({
   personaId?: string;
   // Project-scoped (code-family) sessions summarize the folder NAME, not a count.
   projectScoped?: boolean;
+  projectControlled?: boolean;
   workspace?: string;
   branch?: string | null;
   scratchPrimary?: boolean;
@@ -425,7 +427,18 @@ export function AccessSection({
               <div data-testid="drawer-directories">
                 <div className={`${SEC_H} mb-1.5`}>Folders</div>
                 <div className="-mx-1.5">
-                  {roots.map((r) => (
+                  {projectControlled && (
+                    <div className="flex items-center gap-2 px-2.5 py-1.5" data-testid="project-working-folder">
+                      <Icon name="folder" size={15} className="shrink-0 text-muted" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12.5px] text-ink" title={workspace || ""}>
+                          {workspace || "No working folder selected"}
+                        </div>
+                        <div className="text-[10.5px] text-faint">Working folder comes from project</div>
+                      </div>
+                    </div>
+                  )}
+                  {roots.filter((r) => !projectControlled || !r.primary).map((r) => (
                     <RootRow
                       key={r.path}
                       root={r}

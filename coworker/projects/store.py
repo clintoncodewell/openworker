@@ -46,6 +46,7 @@ class Project:
     created: str
     session_ids: list[str]
     instructions: str
+    workspace: Optional[str]
     path: Path
 
     @property
@@ -168,6 +169,7 @@ class ProjectStore:
             created=str(data["created"]),
             session_ids=[str(x) for x in data.get("session_ids") or []],
             instructions=str(data.get("instructions") or ""),
+            workspace=str(data["workspace"]) if data.get("workspace") else None,
             path=path,
         )
 
@@ -178,6 +180,7 @@ class ProjectStore:
             "created": project.created,
             "session_ids": project.session_ids,
             "instructions": project.instructions,
+            "workspace": project.workspace,
         }
         _atomic_write(project.path / "project.json", json.dumps(data, indent=2) + "\n")
 
@@ -190,7 +193,14 @@ class ProjectStore:
             n += 1
         return candidate
 
-    def create(self, name: str, *, purpose: str = "", instructions: str = "") -> Project:
+    def create(
+        self,
+        name: str,
+        *,
+        purpose: str = "",
+        instructions: str = "",
+        workspace: Optional[str] = None,
+    ) -> Project:
         clean_name = " ".join((name or "").split())[:160] or "Untitled project"
         path = self._available_path(clean_name)
         path.mkdir(parents=False)
@@ -201,6 +211,7 @@ class ProjectStore:
             created=_now(),
             session_ids=[],
             instructions=(instructions or "").strip(),
+            workspace=(workspace or "").strip() or None,
             path=path,
         )
         self._write_metadata(project)
@@ -237,6 +248,7 @@ class ProjectStore:
         name: Optional[str] = None,
         purpose: Optional[str] = None,
         instructions: Optional[str] = None,
+        workspace: Optional[str] = None,
     ) -> Project:
         project = self.get(project_id)
         if project is None:
@@ -261,6 +273,7 @@ class ProjectStore:
             project.created,
             project.session_ids,
             project.instructions if instructions is None else instructions.strip(),
+            project.workspace if workspace is None else workspace.strip() or None,
             path,
         )
         self._write_metadata(updated)

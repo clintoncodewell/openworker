@@ -436,6 +436,44 @@ def test_projects_http_round_trip(tmp_path):
     assert manager.session_store.load("reno-chat").project_id is None
 
 
+def test_project_workspace_round_trip_clear_and_reject_non_directory(tmp_path):
+    manager = SessionManager(workspace=tmp_path, provider=BriefModel(_update()))
+    project = manager.project_store.create("Workspace")
+    workspace = tmp_path / "project-workspace"
+    workspace.mkdir()
+
+    updated = manager.update_project(project.id, {"workspace": str(workspace)})
+    assert updated["ok"] is True
+    assert updated["workspace"] == str(workspace.resolve())
+    assert manager.get_project(project.id)["workspace"] == str(
+        workspace.resolve()
+    )
+
+    rejected = manager.update_project(
+        project.id, {"workspace": str(tmp_path / "missing")}
+    )
+    assert rejected == {
+        "ok": False,
+        "error": "folder does not exist or is not a directory",
+    }
+    assert manager.project_store.get(project.id).workspace == str(workspace.resolve())
+
+    cleared = manager.update_project(project.id, {"workspace": ""})
+    assert cleared["ok"] is True
+    assert cleared["workspace"] is None
+    assert manager.project_store.get(project.id).workspace is None
+
+
+def test_existing_project_without_workspace_still_loads(tmp_path):
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("Legacy")
+    metadata = json.loads((project.path / "project.json").read_text(encoding="utf-8"))
+    metadata.pop("workspace")
+    (project.path / "project.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    assert store.get(project.id).workspace is None
+
+
 def test_a_new_websocket_session_can_start_inside_a_project(tmp_path):
     manager, client = _client(tmp_path, BriefModel(_update()))
     project = manager.project_store.create("Launch")
@@ -447,6 +485,26 @@ def test_a_new_websocket_session_can_start_inside_a_project(tmp_path):
 
     assert manager.session_store.load("project-chat").project_id == project.id
     assert manager.project_store.get(project.id).session_ids == ["project-chat"]
+
+
+def test_project_session_uses_the_project_workspace_not_its_saved_workspace(tmp_path):
+    manager = SessionManager(workspace=None, data_dir=tmp_path, provider=BriefModel(_update()))
+    project_workspace = tmp_path / "project-workspace"
+    saved_workspace = tmp_path / "saved-workspace"
+    project_workspace.mkdir()
+    saved_workspace.mkdir()
+    project = manager.project_store.create("Launch", workspace=str(project_workspace.resolve()))
+    manager.session_store.save(
+        _session("project-workspace-chat", saved_workspace, project_id=project.id)
+    )
+
+    engine = manager.get_engine(
+        "project-workspace-chat", workspace=str(saved_workspace), agent="code"
+    )
+
+    assert engine is not None
+    assert str(engine.executor.cwd) == str(project_workspace.resolve())
+    assert manager.engine_workspace("project-workspace-chat") == str(project_workspace.resolve())
 
 
 def test_starting_a_session_in_a_dead_project_leaves_no_orphan(tmp_path):

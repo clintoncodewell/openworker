@@ -53,6 +53,7 @@ interface Props {
   showArtifacts?: boolean;
   personaId?: string;
   projectScoped?: boolean;
+  projectControlled?: boolean;
   workspace?: string;
   branch?: string | null;
   scratchPrimary?: boolean;
@@ -71,6 +72,7 @@ export function RightRail({
   showArtifacts = true,
   personaId,
   projectScoped,
+  projectControlled,
   workspace,
   branch,
   scratchPrimary,
@@ -238,6 +240,7 @@ export function RightRail({
             sessionId={sessionId}
             personaId={personaId}
             projectScoped={projectScoped}
+            projectControlled={projectControlled}
             workspace={workspace}
             branch={branch}
             scratchPrimary={scratchPrimary}

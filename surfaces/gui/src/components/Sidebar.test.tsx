@@ -143,6 +143,48 @@ describe("Sidebar group/filter control", () => {
     expect(unfiled.parentElement?.lastElementChild).toBe(unfiled);
   });
 
+  it("renders Archive as the last folder after Unfiled", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "folder" } },
+      { match: "/v1/folders", method: "GET", json: { folders: [] } },
+      { match: "/v1/projects", method: "GET", json: { projects: [] } },
+    ]);
+    render(
+      <Sidebar
+        {...baseProps}
+        sessions={[SESSIONS[1], { ...SESSIONS[0], archived: true }]}
+      />,
+    );
+
+    const layout = await screen.findByTestId("folder-layout");
+    const unfiled = within(layout).getByTestId("folder-unfiled");
+    const archive = within(layout).getByTestId("archive-folder");
+    expect(unfiled.nextElementSibling).toBe(archive);
+    expect(layout.lastElementChild).toBe(archive);
+    expect(within(archive).queryByText("incident watch")).toBeNull();
+    fireEvent.click(within(archive).getByRole("button", { name: /Archive/ }));
+    expect(within(archive).getByText("incident watch")).toBeTruthy();
+  });
+
+  it("collapses and reopens Unfiled like any other folder", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "folder" } },
+      { match: "/v1/folders", method: "GET", json: { folders: [] } },
+      { match: "/v1/projects", method: "GET", json: { projects: [] } },
+    ]);
+    render(<Sidebar {...baseProps} sessions={[SESSIONS[1]]} />);
+
+    const layout = await screen.findByTestId("folder-layout");
+    const unfiled = within(layout).getByTestId("folder-unfiled");
+    expect(within(unfiled).getByText("hi there")).toBeTruthy();
+    fireEvent.click(within(unfiled).getByText("Unfiled"));
+    expect(within(unfiled).queryByText("hi there")).toBeNull();
+    fireEvent.click(within(unfiled).getByText("Unfiled"));
+    expect(within(unfiled).getByText("hi there")).toBeTruthy();
+  });
+
   it("keeps sessions with a deleted folder reference under Unfiled", async () => {
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
@@ -157,6 +199,60 @@ describe("Sidebar group/filter control", () => {
 
     const unfiled = await screen.findByTestId("folder-unfiled");
     expect(within(unfiled).getByText("incident watch")).toBeTruthy();
+  });
+});
+
+describe("Projects band", () => {
+  it("nests project conversations with the shared row and opens the project detail", async () => {
+    stubFetch([
+      { match: "/v1/personas", method: "GET", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+      { match: "/v1/folders", method: "GET", json: { folders: [] } },
+      {
+        match: "/v1/projects/project-1",
+        method: "GET",
+        json: {
+          id: "project-1",
+          name: "Launch",
+          created: "2026-08-18T00:00:00Z",
+          session_ids: ["s-ops-1"],
+          instructions: "",
+          workspace: "/w",
+          project_md: "",
+          sessions: [],
+          files: [],
+          updated_at: "2026-08-18T00:00:00Z",
+        },
+      },
+      {
+        match: "/v1/projects",
+        method: "GET",
+        json: {
+          projects: [
+            {
+              id: "project-1",
+              name: "Launch",
+              session_count: 1,
+              session_ids: ["s-ops-1"],
+              updated_at: "2026-08-18T00:00:00Z",
+            },
+          ],
+        },
+      },
+    ]);
+    const onOpenProjects = vi.fn();
+    render(
+      <Sidebar
+        {...baseProps}
+        sessions={[{ ...SESSIONS[0], project_id: "project-1" }]}
+        onOpenProjects={onOpenProjects}
+      />,
+    );
+
+    const band = await screen.findByTestId("projects-band");
+    expect(within(band).getByText("incident watch")).toBeTruthy();
+    fireEvent.click(within(band).getByTitle("Open project Launch"));
+    expect(onOpenProjects).toHaveBeenCalledWith("project-1");
   });
 });
 

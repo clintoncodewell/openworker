@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addProjectSession,
   announceProjectsChanged,
@@ -12,6 +12,7 @@ import {
   type ProjectMutationResult,
 } from "../api";
 import type { SessionInfo } from "../types";
+import { chooseFolder } from "../tauri";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 
@@ -99,14 +100,16 @@ interface Props {
   recentSessions: SessionInfo[];
   onOpenSession: (id: string, workspace: string, agent: string) => void;
   onNewConversation: (projectId: string) => Promise<void> | void;
+  initialProjectId?: string | null;
 }
 
-export function ProjectsView({ recentSessions, onOpenSession, onNewConversation }: Props) {
+export function ProjectsView({ recentSessions, onOpenSession, onNewConversation, initialProjectId }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [openProject, setOpenProject] = useState<Project | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const initialOpened = useRef<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -120,6 +123,10 @@ export function ProjectsView({ recentSessions, onOpenSession, onNewConversation 
         .filter(isProject)
         .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
       setProjects(full);
+      if (initialProjectId && initialOpened.current !== initialProjectId) {
+        initialOpened.current = initialProjectId;
+        setOpenProject(full.find((project) => project.id === initialProjectId) || null);
+      }
     } catch {
       setProjects([]);
       setLoadFailed(true);
@@ -130,7 +137,7 @@ export function ProjectsView({ recentSessions, onOpenSession, onNewConversation 
 
   useEffect(() => {
     load();
-  }, []);
+  }, [initialProjectId]);
 
   if (openProject) {
     return (
@@ -289,6 +296,8 @@ function ProjectDetail({
   const [name, setName] = useState(project.name);
   const [purpose, setPurpose] = useState(sections.purpose);
   const [instructions, setInstructions] = useState(project.instructions || "");
+  const [workspace, setWorkspace] = useState(project.workspace || "");
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [selectedSession, setSelectedSession] = useState("");
@@ -300,6 +309,7 @@ function ProjectDetail({
     setName(project.name);
     setPurpose(projectSections(project.project_md).purpose);
     setInstructions(project.instructions || "");
+    setWorkspace(project.workspace || "");
   }, [project]);
 
   const unattached = useMemo(() => {
@@ -324,6 +334,7 @@ function ProjectDetail({
     }
     setError("");
     onChange(next as Project);
+    announceProjectsChanged();
     return true;
   };
 
@@ -360,6 +371,28 @@ function ProjectDetail({
     } catch (failure) {
       showFailure(failure);
     }
+  };
+
+  const saveWorkspace = async (next: string) => {
+    if (savingWorkspace || next === (project.workspace || "")) return;
+    setSavingWorkspace(true);
+    try {
+      const result = await updateProject(project.id, { workspace: next });
+      if (!applyProject(result)) setWorkspace(project.workspace || "");
+    } catch (failure) {
+      setWorkspace(project.workspace || "");
+      showFailure(failure);
+    } finally {
+      setSavingWorkspace(false);
+    }
+  };
+
+  const pickWorkspace = async () => {
+    if (savingWorkspace) return;
+    const picked = await chooseFolder();
+    if (!picked) return;
+    setWorkspace(picked);
+    await saveWorkspace(picked);
   };
 
   const refresh = async () => {
@@ -445,6 +478,40 @@ function ProjectDetail({
       </div>
 
       <div className="grid gap-4">
+        <section className={CARD + " p-4"}>
+          <h3 className="text-[13px] font-semibold text-ink">Working folder</h3>
+          <p className={HELP}>Conversations in this project run in this folder.</p>
+          <div className="mt-3 flex items-center gap-2">
+            <div
+              className="min-w-0 flex-1 truncate rounded-lg border border-line bg-paper px-3 py-2 text-[12.5px] text-muted"
+              title={workspace || "No working folder selected"}
+            >
+              {workspace || "No folder selected"}
+            </div>
+            <button
+              className={BTN}
+              disabled={savingWorkspace}
+              onClick={() => void pickWorkspace()}
+            >
+              {savingWorkspace ? "Saving…" : workspace ? "Change" : "Choose folder"}
+            </button>
+            {workspace && (
+              <button
+                className="w-10 h-10 grid place-items-center rounded-lg text-muted hover:text-danger hover:bg-paper active:bg-line/60 disabled:opacity-40"
+                aria-label="Clear working folder"
+                title="Clear working folder"
+                disabled={savingWorkspace}
+                onClick={() => {
+                  setWorkspace("");
+                  void saveWorkspace("");
+                }}
+              >
+                <Icon name="x" size={15} />
+              </button>
+            )}
+          </div>
+        </section>
+
         <section className={CARD + " p-4"}>
           <label className="block">
             <span className="text-[13px] font-semibold text-ink">Purpose</span>

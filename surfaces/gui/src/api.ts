@@ -2065,6 +2065,7 @@ export type ProjectSummary = {
   id: string;
   name: string;
   session_count: number;
+  session_ids: string[];
   updated_at: string;
 };
 
@@ -2074,6 +2075,7 @@ export type Project = {
   created: string;
   session_ids: string[];
   instructions: string;
+  workspace: string | null;
   project_md: string;
   sessions: SessionInfo[];
   files: string[];
@@ -2098,6 +2100,7 @@ export async function createProject(payload: {
   name: string;
   purpose?: string;
   instructions?: string;
+  workspace?: string;
 }): Promise<Project> {
   const res = await fetch(`${httpBase()}/v1/projects`, {
     method: "POST",
@@ -2114,7 +2117,7 @@ export async function getProject(id: string): Promise<Project> {
 
 export async function updateProject(
   id: string,
-  patch: { name?: string; purpose?: string; instructions?: string },
+  patch: { name?: string; purpose?: string; instructions?: string; workspace?: string },
 ): Promise<ProjectMutationResult> {
   const res = await fetch(`${httpBase()}/v1/projects/${encodeURIComponent(id)}`, {
     method: "POST",

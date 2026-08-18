@@ -52,6 +52,7 @@ export interface SessionInfo {
   messages: number;
   pinned?: boolean;
   archived?: boolean;
+  project_id?: string | null;
   folder_id?: string | null;
   // Inbox items awaiting this session (the amber attention count that bubbles up the sidebar).
   attention?: number;

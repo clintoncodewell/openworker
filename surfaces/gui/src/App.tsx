@@ -202,6 +202,7 @@ export function App() {
   // id going stale (e.g. the automation was deleted) reopened a dead detail —
   // "Loading…" forever (owner-hit 2026-07-20). Nav re-entry should land on the list.
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
+  const [projectsOpenId, setProjectsOpenId] = useState<string | null>(null);
   const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
   const [settingsTab, setSettingsTab] = useState<"appearance" | "models" | "voice" | "personas">(
@@ -587,7 +588,11 @@ export function App() {
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
           // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
-          if (d.workspace) setWorkspace((cur) => cur || d.workspace);
+          if (d.workspace) {
+            if (d.project_id) setWorkspace(d.workspace);
+            else setWorkspace((cur) => cur || d.workspace);
+          }
+          if (d.project_id) refreshSessions();
           break;
         case "turn_start":
           setRunning(true);
@@ -1388,7 +1393,10 @@ export function App() {
           openPersona(id, "session");
         }}
         onManagePersonas={() => openSettings("personas")}
-        onOpenProjects={() => setSurface("projects")}
+        onOpenProjects={(projectId) => {
+          setProjectsOpenId(projectId || null);
+          setSurface("projects");
+        }}
         onOpenScheduled={() => setSurface("scheduled")}
         onOpenAutomation={(id) => {
           setScheduledOpenId(id);
@@ -1411,6 +1419,7 @@ export function App() {
           recentSessions={sessions}
           onOpenSession={selectSession}
           onNewConversation={(projectId) => startNewSession(undefined, projectId)}
+          initialProjectId={projectsOpenId}
         />
       ) : surface === "scheduled" ? (
         <ScheduledView
@@ -1677,12 +1686,14 @@ export function App() {
               onConnectModel={openModelSetup}
               onConfigureVoiceInput={() => openSettings("voice")}
               onSend={send}
+              onSessionRenamed={refreshSessions}
               onSteer={steer}
               onSchedule={schedulePrompt}
               onInterrupt={interrupt}
               onModeChange={changeMode}
               onModelChange={changeModel}
               workspace={needsWorkspace(agent) ? workspace || "" : undefined}
+              projectControlled={!!activeInfo?.project_id}
               unattended={unattended}
               onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
               prefill={composerPrefill}
@@ -1742,6 +1753,7 @@ export function App() {
             showArtifacts={agent === "cowork"}
             personaId={agent}
             projectScoped={isProjectScoped(personaOf(agent))}
+            projectControlled={!!activeInfo?.project_id}
             workspace={workspace || undefined}
             branch={branch}
             scratchPrimary={agent === "cowork"}

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment } from "../types";
 import { isPdfFile, readFile } from "../attach";
-import { getSettings, inspectPdf } from "../api";
+import { getSettings, inspectPdf, renameSession } from "../api";
 import { Dropdown, type Option } from "./Dropdown";
 import { AddFolderForm } from "./AddFolderForm";
 import { Icon } from "./Icon";
@@ -86,6 +86,7 @@ interface Props {
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
   onSend: (text: string, attachments?: Attachment[]) => void;
+  onSessionRenamed?: () => void;
   onInterrupt: () => void;
   // ⌘/Ctrl+Enter while a turn runs: inject into the live turn instead of queueing behind it.
   onSteer?: (text: string, attachments?: Attachment[]) => void;
@@ -96,6 +97,7 @@ interface Props {
   // When set (Code/Cowork), the Mode menu is shown. The folder/roots + branch controls left the
   // composer for the Session settings drawer (§22) — folder access is standing session config.
   workspace?: string;
+  projectControlled?: boolean;
   // Unattended / send-approvals-to-Inbox — folded into the Mode menu (§22): "who approves, and
   // when" is one mental model. Absent handler = no toggle (e.g. Chat).
   unattended?: boolean;
@@ -152,6 +154,7 @@ export function Composer(props: Props) {
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [attachNotice, setAttachNotice] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
   // Armed schedule (epoch seconds) — Enter then schedules instead of sending. Null = off.
   const [scheduledFor, setScheduledFor] = useState<number | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -334,7 +337,41 @@ export function Composer(props: Props) {
 
   // Enter queues while a turn runs (the server parks it), ⌘/Ctrl+Enter steers the live turn,
   // and an armed schedule turns Enter into "schedule for <time>". The composer is never locked.
-  const submit = (opts?: { steer?: boolean }) => {
+  const submit = async (opts?: { steer?: boolean }) => {
+    if (!opts?.steer) {
+      const renameName = text.startsWith("/rename") && /^\/rename(?:\s|$)/.test(text)
+        ? text.slice("/rename".length).trim()
+        : /^\/\s/.test(text)
+          ? text.slice(1).trim()
+          : null;
+      if (renameName !== null) {
+        if (renaming) return;
+        if (!renameName) {
+          // Enter did nothing visible otherwise, which reads as the composer being stuck.
+          showAttachNotice("Give the conversation a name: /rename <name>");
+          return;
+        }
+        setRenaming(true);
+        try {
+          const result = await renameSession(props.sessionId, renameName);
+          if (!result.ok) {
+            showAttachNotice(result.error || "Conversation could not be renamed.");
+            return;
+          }
+          // Only the command text goes; a rename is not a send, so staged attachments stay.
+          setText("");
+          showAttachNotice(`Conversation renamed to ${renameName}.`);
+          props.onSessionRenamed?.();
+        } catch (error) {
+          showAttachNotice(
+            error instanceof Error ? error.message : "Conversation could not be renamed.",
+          );
+        } finally {
+          setRenaming(false);
+        }
+        return;
+      }
+    }
     // Steering injects into a turn that is already running, so a council prefix there would
     // convene a second panel mid-debate. Council mode applies to new messages only.
     const t = withCouncil(text, council && !(opts?.steer && props.running));
@@ -361,12 +398,12 @@ export function Composer(props: Props) {
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      submit({ steer: props.running });
+      void submit({ steer: props.running });
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      submit();
+      void submit();
       return;
     }
     if (e.key === "Escape" && scheduleOpen) {
@@ -535,7 +572,17 @@ export function Composer(props: Props) {
                         () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
                       )}
                       {props.workspace === undefined &&
+                        !props.projectControlled &&
                         attachItem("folderPlus", "Folder…", () => setAddingFolder(true))}
+                      {props.projectControlled && (
+                        <div
+                          className="flex items-center gap-2 px-2.5 py-2 text-[12.5px] text-faint"
+                          data-testid="project-folder-source"
+                        >
+                          <Icon name="folder" size={14} className="shrink-0" />
+                          <span>Working folder comes from project</span>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -724,8 +771,8 @@ export function Composer(props: Props) {
                 ? "bg-accent text-white hover:brightness-105"
                 : "bg-paper border border-line text-faint")
             }
-            onClick={() => submit()}
-            disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
+            onClick={() => void submit()}
+            disabled={!props.connected || !!dictation?.recording || !!dictationBusy || renaming}
             title={
               needsModel
                 ? "Connect a model to send"

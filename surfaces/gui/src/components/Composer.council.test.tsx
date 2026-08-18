@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Composer, withCouncil } from "./Composer";
+import * as api from "../api";
 
 const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
   sessionId: "test-session",
@@ -25,7 +26,10 @@ const type = (text: string) => {
 };
 
 beforeEach(() => localStorage.clear());
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("withCouncil", () => {
   it("prefixes the question when the toggle is on", () => {
@@ -87,6 +91,50 @@ describe("Composer council toggle", () => {
     fireEvent.change(box, { target: { value: "focus on cost" } });
     fireEvent.keyDown(box, { key: "Enter", metaKey: true });
     expect(onSteer).toHaveBeenCalledWith("focus on cost", []);
+  });
+});
+
+describe("Composer rename command", () => {
+  it("renames with /rename, clears the draft, refreshes, and confirms visibly", async () => {
+    const onSend = vi.fn();
+    const onSessionRenamed = vi.fn();
+    vi.spyOn(api, "renameSession").mockResolvedValue({ ok: true });
+    render(<Composer {...props({ onSend, onSessionRenamed })} />);
+
+    type("/rename Launch plan");
+
+    await screen.findByText("Conversation renamed to Launch plan.");
+    expect(api.renameSession).toHaveBeenCalledWith("test-session", "Launch plan");
+    expect(onSessionRenamed).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("supports slash-space shorthand and sends unknown slash commands normally", async () => {
+    const onSend = vi.fn();
+    vi.spyOn(api, "renameSession").mockResolvedValue({ ok: true });
+    render(<Composer {...props({ onSend })} />);
+
+    type("/ Short name");
+    await screen.findByText("Conversation renamed to Short name.");
+    type("/unknown keep this");
+
+    expect(api.renameSession).toHaveBeenCalledWith("test-session", "Short name");
+    expect(onSend).toHaveBeenCalledWith("/unknown keep this", []);
+  });
+
+  it("leaves a rename command without a name in place and surfaces API failures", async () => {
+    vi.spyOn(api, "renameSession").mockResolvedValue({ ok: false, error: "rename failed" });
+    render(<Composer {...props()} />);
+
+    type("/rename   ");
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("/rename   ");
+    expect(api.renameSession).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "/rename New name" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await screen.findByText("rename failed");
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("/rename New name");
   });
 });
 

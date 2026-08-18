@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ProjectsView } from "./ProjectsView";
 import * as api from "../api";
+import * as tauri from "../tauri";
 import type { SessionInfo } from "../types";
 
 const markdown = (purpose: string, where = "The work is moving. More detail follows.") => `## Purpose
@@ -28,6 +29,7 @@ function project(
     created: "2026-08-01T10:00:00Z",
     session_ids: Array.from({ length: count }, (_, index) => `${id}-session-${index}`),
     instructions: "Keep answers concise.",
+    workspace: null,
     project_md: markdown("Ship a dependable release.", where),
     sessions: [],
     files: [],
@@ -55,6 +57,7 @@ beforeEach(() => {
       id,
       name,
       session_count: session_ids.length,
+      session_ids,
       updated_at,
     })),
   );
@@ -69,6 +72,7 @@ beforeEach(() => {
       ...current,
       name: patch.name ?? current.name,
       instructions: patch.instructions ?? current.instructions,
+      workspace: patch.workspace === undefined ? current.workspace : patch.workspace || null,
       project_md:
         patch.purpose === undefined
           ? current.project_md
@@ -173,6 +177,25 @@ describe("ProjectsView", () => {
       expect(api.updateProject).toHaveBeenCalledWith("alpha", {
         purpose: "Prepare the public launch.",
       }),
+    );
+  });
+
+  it("chooses and clears the project working folder", async () => {
+    records = [project("alpha", "Alpha")];
+    vi.spyOn(tauri, "chooseFolder").mockResolvedValue("/work/alpha");
+    await openFirstProject();
+
+    expect(
+      screen.getByText("Conversations in this project run in this folder."),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    await waitFor(() =>
+      expect(api.updateProject).toHaveBeenCalledWith("alpha", { workspace: "/work/alpha" }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clear working folder" }));
+    await waitFor(() =>
+      expect(api.updateProject).toHaveBeenCalledWith("alpha", { workspace: "" }),
     );
   });
 
