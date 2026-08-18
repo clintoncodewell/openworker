@@ -1,0 +1,27 @@
+surfaces/gui/src/components/ProjectsView.tsx
+  s_3f16b4dbfd2cda::t_597cfed4daae98 39-46,120,317
+surfaces/gui/src/App.tsx
+  s_3f16b4dbfd2cda::t_a54b1694c3a28e 788-790,956-957,978
+  s_3f16b4dbfd2cda::t_3b1c427806c5a5 778-786
+  s_3f16b4dbfd2cda::t_b8896794f3514c 190-195
+tests/test_projects.py
+  s_3f16b4dbfd2cda::t_32481274842efc 452-466
+coworker/server/app.py
+  s_3f16b4dbfd2cda::t_52dabcdbb2ea89 1684-1691,1695
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "62d8b419dfbb60dc5baed55ad04220e0eb8e8d9c",
+  "prompts": {},
+  "sessions": {
+    "s_3f16b4dbfd2cda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "081183e2-fec3-4e0f-8a4f-3b8d21cebcb2",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
